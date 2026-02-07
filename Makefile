@@ -32,7 +32,7 @@ DEFINE += -DUSE_HDMI -DSCREEN_WIDTH=1920 -DSCREEN_HEIGHT=1080
 DEFINE += -DMBEDTLS_CONFIG_FILE='<circle-mbedtls/config-circle-mbedtls.h>'
 # Increase kernel max size from default 2MB to 4MB for larger assets
 DEFINE += -DKERNEL_MAX_SIZE=0x400000
-DEFINE += -DAPP_VERSION='"v0.4.0"'
+DEFINE += -DAPP_VERSION='"v0.5.0"'
 
 # Object files
 OBJS = src/main.o \
