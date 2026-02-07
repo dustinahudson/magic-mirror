@@ -1,0 +1,47 @@
+# Build outputs
+*.o
+*.d
+*.elf
+*.img
+*.hex
+*.bin
+*.map
+*.lst
+
+# Circle OS build
+kernel*.img
+
+# Dependencies (downloaded by init.sh / deploy.sh)
+deps/
+lib/circle-stdlib/
+lib/stb/
+lib/date/
+
+# Assets (user-provided)
+assets/fonts/*.ttf
+assets/fonts/*.otf
+assets/icons/weather/
+assets/icons/weather-icons/
+
+# IDE / tools
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# WiFi credentials (use wpa_supplicant.conf.example as template)
+wpa_supplicant.conf
+
+# Use config/config/config.json.example as template
+config/config.json
+
+# Dead code
+_disabled/
+
+# Logs
+*.log

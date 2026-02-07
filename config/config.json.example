@@ -1,0 +1,24 @@
+{
+  "timezone": "America/Chicago",
+  "weather": {
+    "zipcode": "64111",
+    "units": "imperial"
+  },
+  "calendars": [
+    {
+      "url": "",
+      "name": "",
+      "color": "#52FA7F"
+    },
+    {
+      "url": "",
+      "name": "",
+      "color": "#5264FA"
+    },
+    {
+      "url": "",
+      "name": "Work",
+      "color": "#FA5258"
+    }
+  ]
+}
