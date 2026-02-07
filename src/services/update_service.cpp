@@ -103,15 +103,21 @@ bool UpdateService::FetchLatestRelease(char* outTag, size_t tagLen,
     }
     outTag[i] = '\0';
 
-    // Parse first asset's browser_download_url
-    // Looking for: "browser_download_url": "https://..."
-    const char* urlKey = strstr(response.body, "\"browser_download_url\"");
-    if (!urlKey) {
-        CLogger::Get()->Write(FromUpdate, LogError, "No browser_download_url in response");
+    // Parse first asset's API url (within "assets" array)
+    // The API url goes via api.github.com which redirects to CDN with Accept: application/octet-stream
+    const char* assetsKey = strstr(response.body, "\"assets\"");
+    if (!assetsKey) {
+        CLogger::Get()->Write(FromUpdate, LogError, "No assets in response");
         return false;
     }
 
-    p = urlKey + 22; // skip "browser_download_url"
+    const char* urlKey = strstr(assetsKey, "\"url\"");
+    if (!urlKey) {
+        CLogger::Get()->Write(FromUpdate, LogError, "No asset url in response");
+        return false;
+    }
+
+    p = urlKey + 5; // skip "url"
     while (*p && *p != '"') p++;
     if (*p != '"') return false;
     p++; // skip opening quote
