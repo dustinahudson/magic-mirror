@@ -107,6 +107,13 @@ boolean CKernel::Initialize()
         }
     }
 
+    // Start file logging now that filesystem is available
+    if (bOK) {
+        if (!m_FileLogger.Initialize()) {
+            m_Logger.Write(FromKernel, LogWarning, "File logger init failed");
+        }
+    }
+
     // Initialize LVGL for display management
     if (bOK) {
         bOK = m_LVGL.Initialize();
@@ -538,6 +545,9 @@ TShutdownMode CKernel::Run()
             lastUpdateCheck = now;
         }
 
+        // Flush log events to file
+        m_FileLogger.Update();
+
         // Update LVGL - this handles all rendering
         m_LVGL.Update(FALSE);
 
@@ -549,6 +559,9 @@ TShutdownMode CKernel::Run()
         nLoopCount++;
         m_Scheduler.MsSleep(10);
     }
+
+    // Flush and close log file before shutdown
+    m_FileLogger.Close();
 
     // Clean up
     delete pGeoService;

@@ -22,6 +22,8 @@
 #include <SDCard/emmc.h>
 #include <ff.h>
 
+#include "services/file_logger.h"
+
 // WLAN support
 #include <wlan/bcm4343.h>
 #include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
@@ -80,6 +82,7 @@ private:
 
     bool m_bNetworkReady;
     bool m_bRebootRequested;
+    mm::FileLogger m_FileLogger;
 };
 
 #endif // KERNEL_H
