@@ -459,7 +459,7 @@ bool HttpClient::GetRawInternal(const char* url, HttpResponse* response, int red
              "GET %s HTTP/1.0\r\n"
              "Host: %s\r\n"
              "User-Agent: MagicMirror/1.0\r\n"
-             "Accept: application/octet-stream\r\n"
+             "Accept: */*\r\n"
              "Connection: close\r\n"
              "\r\n",
              path, host);
