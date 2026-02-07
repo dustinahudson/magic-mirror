@@ -3,6 +3,7 @@
 #include <fatfs/ff.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static const char FromUpdate[] = "update";
 
@@ -74,8 +75,10 @@ bool UpdateService::CheckAndUpdate()
 bool UpdateService::FetchLatestRelease(char* outTag, size_t tagLen,
                                        char* outAssetUrl, size_t urlLen)
 {
-    HttpResponse response;
-    if (!m_pHttpClient->Get(GITHUB_API_HOST, RELEASES_PATH, true, &response)) {
+    static HttpResponse response;  // 512KB — keep off stack
+    char url[256];
+    snprintf(url, sizeof(url), "https://%s%s", GITHUB_API_HOST, RELEASES_PATH);
+    if (!m_pHttpClient->GetRaw(url, &response)) {
         CLogger::Get()->Write(FromUpdate, LogError, "GitHub API request failed");
         return false;
     }

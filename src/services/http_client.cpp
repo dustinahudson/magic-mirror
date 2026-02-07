@@ -410,4 +410,175 @@ bool HttpClient::DownloadFileInternal(const char* url, const char* sdPath, int r
     }
 }
 
+bool HttpClient::GetRaw(const char* url, HttpResponse* response)
+{
+    response->success = false;
+    response->statusCode = 0;
+    response->bodyLength = 0;
+    response->body[0] = '\0';
+
+    return GetRawInternal(url, response, 5);
+}
+
+bool HttpClient::GetRawInternal(const char* url, HttpResponse* response, int redirectsLeft)
+{
+    if (redirectsLeft <= 0) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: too many redirects");
+        return false;
+    }
+
+    char host[256];
+    char path[1024];
+    bool useSSL = false;
+
+    if (!ParseUrl(url, host, sizeof(host), path, sizeof(path), &useSSL)) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: bad URL: %s", url);
+        return false;
+    }
+
+    if (!useSSL) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: only HTTPS is supported");
+        return false;
+    }
+
+    unsigned port = HTTPS_PORT;
+
+    // DNS resolve
+    CIPAddress ip;
+    CDNSClient dns(m_pNet);
+
+    CLogger::Get()->Write(FromHttpClient, LogDebug, "GetRaw: resolving %s", host);
+    if (!dns.Resolve(host, &ip)) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: DNS failed for %s", host);
+        return false;
+    }
+
+    // Build HTTP request
+    char request[1536];
+    snprintf(request, sizeof(request),
+             "GET %s HTTP/1.0\r\n"
+             "Host: %s\r\n"
+             "User-Agent: MagicMirror/1.0\r\n"
+             "Accept: */*\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             path, host);
+
+    CLogger::Get()->Write(FromHttpClient, LogDebug, "GetRaw: connecting to %s:%u", host, port);
+
+    CircleMbedTLS::CTLSSimpleClientSocket tlsSocket(m_pTLS, IPPROTO_TCP);
+    if (tlsSocket.Setup(host) != 0) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: TLS setup failed");
+        return false;
+    }
+    if (tlsSocket.Connect(ip, port) < 0) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: TLS connect failed");
+        return false;
+    }
+
+    if (tlsSocket.Send(request, strlen(request), 0) < 0) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: TLS send failed");
+        return false;
+    }
+
+    // Receive headers byte by byte to find end of headers
+    char headerBuf[4096];
+    unsigned headerLen = 0;
+    bool headersComplete = false;
+
+    while (headerLen < sizeof(headerBuf) - 1) {
+        int n = tlsSocket.Receive((u8*)&headerBuf[headerLen], 1, 0);
+        if (n <= 0) break;
+        headerLen++;
+
+        if (headerLen >= 4 &&
+            headerBuf[headerLen - 4] == '\r' && headerBuf[headerLen - 3] == '\n' &&
+            headerBuf[headerLen - 2] == '\r' && headerBuf[headerLen - 1] == '\n') {
+            headersComplete = true;
+            break;
+        }
+    }
+    headerBuf[headerLen] = '\0';
+
+    if (!headersComplete) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: incomplete headers");
+        return false;
+    }
+
+    // Parse status code from "HTTP/1.x NNN"
+    int statusCode = 0;
+    const char* statusStart = strchr(headerBuf, ' ');
+    if (statusStart) {
+        statusCode = atoi(statusStart + 1);
+    }
+
+    CLogger::Get()->Write(FromHttpClient, LogDebug, "GetRaw: status %d", statusCode);
+
+    // Handle redirects (301, 302, 303, 307, 308)
+    if (statusCode >= 300 && statusCode < 400) {
+        char redirectUrl[1024] = {0};
+        const char* p = headerBuf;
+        while (*p) {
+            if ((*p == 'L' || *p == 'l') &&
+                strncasecmp(p, "Location:", 9) == 0) {
+                p += 9;
+                while (*p == ' ' || *p == '\t') p++;
+                const char* end = strchr(p, '\r');
+                if (!end) end = strchr(p, '\n');
+                if (end) {
+                    size_t len = end - p;
+                    if (len < sizeof(redirectUrl)) {
+                        strncpy(redirectUrl, p, len);
+                        redirectUrl[len] = '\0';
+                    }
+                }
+                break;
+            }
+            const char* nl = strchr(p, '\n');
+            if (!nl) break;
+            p = nl + 1;
+        }
+
+        if (redirectUrl[0] == '\0') {
+            CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: redirect with no Location");
+            return false;
+        }
+
+        CLogger::Get()->Write(FromHttpClient, LogNotice, "GetRaw: redirect -> %s", redirectUrl);
+        return GetRawInternal(redirectUrl, response, redirectsLeft - 1);
+    }
+
+    response->statusCode = statusCode;
+
+    if (statusCode != 200) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: HTTP %d", statusCode);
+        return false;
+    }
+
+    // Read body into response buffer
+    unsigned maxBody = sizeof(response->body) - 1;
+    unsigned totalRead = 0;
+    u8 buf[4096];
+
+    while (totalRead < maxBody) {
+        unsigned toRead = sizeof(buf);
+        if (totalRead + toRead > maxBody) {
+            toRead = maxBody - totalRead;
+        }
+        int n = tlsSocket.Receive(buf, toRead, 0);
+        if (n <= 0) break;
+
+        memcpy(response->body + totalRead, buf, n);
+        totalRead += n;
+    }
+
+    response->body[totalRead] = '\0';
+    response->bodyLength = totalRead;
+    response->success = true;
+
+    CLogger::Get()->Write(FromHttpClient, LogDebug, "GetRaw: received %u bytes", totalRead);
+
+    return true;
+}
+
 } // namespace mm

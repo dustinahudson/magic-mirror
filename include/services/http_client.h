@@ -33,12 +33,18 @@ public:
     // Download a file from URL to SD card path, following redirects
     bool DownloadFile(const char* url, const char* sdPath);
 
+    // Raw-socket GET with redirect handling (avoids Circle's CHTTPClient)
+    bool GetRaw(const char* url, HttpResponse* response);
+
 private:
     bool ParseUrl(const char* url, char* host, size_t hostLen,
                   char* path, size_t pathLen, bool* useSSL);
 
     // Internal download helper with redirect depth tracking
     bool DownloadFileInternal(const char* url, const char* sdPath, int redirectsLeft);
+
+    // Internal raw GET helper with redirect depth tracking
+    bool GetRawInternal(const char* url, HttpResponse* response, int redirectsLeft);
 
     CNetSubSystem* m_pNet;
     CircleMbedTLS::CTLSSimpleSupport* m_pTLS;
