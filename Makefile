@@ -75,6 +75,8 @@ LIBS = $(CIRCLE_STDLIB_DIR)/src/circle-mbedtls/libcircle-mbedtls.a \
        $(NEWLIBDIR)/lib/libc.a \
        $(NEWLIBDIR)/lib/libm.a
 
+EXTRACLEAN = $(OBJS) $(OBJS:.o=.d)
+
 include $(CIRCLEHOME)/Rules.mk
 
 INCLUDE += $(EXTRAINCLUDE)
