@@ -402,10 +402,10 @@ TShutdownMode CKernel::Run()
     if (m_bNetworkReady) {
         CString ipString;
         m_Net.GetConfig()->GetIPAddress()->Format(&ipString);
-        lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d",
+        lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d | " APP_VERSION,
                               (const char*)ipString, config.nCalendars, icsEventCount);
     } else {
-        lv_label_set_text_fmt(status, "Offline | Cals:%d", config.nCalendars);
+        lv_label_set_text_fmt(status, "Offline | Cals:%d | " APP_VERSION, config.nCalendars);
     }
     lv_obj_set_style_text_color(status, lv_color_make(80, 80, 80), LV_PART_MAIN);
     lv_obj_set_style_text_font(status, &lv_font_montserrat_14, LV_PART_MAIN);
@@ -444,7 +444,7 @@ TShutdownMode CKernel::Run()
             if (m_bNetworkReady) {
                 CString ipString;
                 m_Net.GetConfig()->GetIPAddress()->Format(&ipString);
-                lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d | Sync:%us",
+                lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d | Sync:%us | " APP_VERSION,
                                       (const char*)ipString, config.nCalendars, icsEventCount, secsUntilRefresh);
             }
         }
@@ -484,7 +484,7 @@ TShutdownMode CKernel::Run()
             // Update status display
             CString ipString;
             m_Net.GetConfig()->GetIPAddress()->Format(&ipString);
-            lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d",
+            lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d | " APP_VERSION,
                                   (const char*)ipString, config.nCalendars, icsEventCount);
         }
 
