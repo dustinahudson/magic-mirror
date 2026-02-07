@@ -2,9 +2,11 @@
 #define HTTP_CLIENT_H
 
 #include <circle/net/netsubsystem.h>
+#include <circle/net/socket.h>
 #include <circle/string.h>
 #include <circle/types.h>
 #include <circle-mbedtls/tlssimplesupport.h>
+#include <circle-mbedtls/tlssimpleclientsocket.h>
 
 namespace mm {
 
@@ -28,9 +30,15 @@ public:
     // Fetch with explicit host/path (for when you've already parsed the URL)
     bool Get(const char* host, const char* path, bool useSSL, HttpResponse* response);
 
+    // Download a file from URL to SD card path, following redirects
+    bool DownloadFile(const char* url, const char* sdPath);
+
 private:
     bool ParseUrl(const char* url, char* host, size_t hostLen,
                   char* path, size_t pathLen, bool* useSSL);
+
+    // Internal download helper with redirect depth tracking
+    bool DownloadFileInternal(const char* url, const char* sdPath, int redirectsLeft);
 
     CNetSubSystem* m_pNet;
     CircleMbedTLS::CTLSSimpleSupport* m_pTLS;

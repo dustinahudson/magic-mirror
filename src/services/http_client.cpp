@@ -1,8 +1,12 @@
 #include "services/http_client.h"
 #include <circle/net/dnsclient.h>
+#include <circle/net/in.h>
 #include <circle/logger.h>
 #include <circle-mbedtls/httpclient.h>
+#include <fatfs/ff.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 static const char FromHttpClient[] = "http";
 
@@ -118,6 +122,292 @@ bool HttpClient::ParseUrl(const char* url, char* host, size_t hostLen,
     host[hostLength] = '\0';
 
     return true;
+}
+
+bool HttpClient::DownloadFile(const char* url, const char* sdPath)
+{
+    return DownloadFileInternal(url, sdPath, 5);
+}
+
+bool HttpClient::DownloadFileInternal(const char* url, const char* sdPath, int redirectsLeft)
+{
+    if (redirectsLeft <= 0) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "Too many redirects");
+        return false;
+    }
+
+    char host[256];
+    char path[1024];
+    bool useSSL = false;
+
+    if (!ParseUrl(url, host, sizeof(host), path, sizeof(path), &useSSL)) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: bad URL: %s", url);
+        return false;
+    }
+
+    unsigned port = useSSL ? HTTPS_PORT : HTTP_PORT;
+
+    // DNS resolve
+    CIPAddress ip;
+    CDNSClient dns(m_pNet);
+
+    CLogger::Get()->Write(FromHttpClient, LogDebug, "DownloadFile: resolving %s", host);
+    if (!dns.Resolve(host, &ip)) {
+        CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: DNS failed for %s", host);
+        return false;
+    }
+
+    // Build HTTP request
+    char request[1536];
+    snprintf(request, sizeof(request),
+             "GET %s HTTP/1.0\r\n"
+             "Host: %s\r\n"
+             "User-Agent: MagicMirror/1.0\r\n"
+             "Accept: */*\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             path, host);
+
+    CLogger::Get()->Write(FromHttpClient, LogDebug, "DownloadFile: connecting to %s:%u (SSL=%d)",
+                          host, port, useSSL ? 1 : 0);
+
+    // Create socket and connect
+    if (useSSL) {
+        CircleMbedTLS::CTLSSimpleClientSocket tlsSocket(m_pTLS, IPPROTO_TCP);
+        if (tlsSocket.Setup(host) != 0) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: TLS setup failed");
+            return false;
+        }
+        if (tlsSocket.Connect(ip, port) < 0) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: TLS connect failed");
+            return false;
+        }
+
+        if (tlsSocket.Send(request, strlen(request), 0) < 0) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: TLS send failed");
+            return false;
+        }
+
+        // Receive headers first - read byte by byte to find end of headers
+        char headerBuf[4096];
+        unsigned headerLen = 0;
+        bool headersComplete = false;
+
+        while (headerLen < sizeof(headerBuf) - 1) {
+            int n = tlsSocket.Receive((u8*)&headerBuf[headerLen], 1, 0);
+            if (n <= 0) break;
+            headerLen++;
+
+            // Check for \r\n\r\n
+            if (headerLen >= 4 &&
+                headerBuf[headerLen - 4] == '\r' && headerBuf[headerLen - 3] == '\n' &&
+                headerBuf[headerLen - 2] == '\r' && headerBuf[headerLen - 1] == '\n') {
+                headersComplete = true;
+                break;
+            }
+        }
+        headerBuf[headerLen] = '\0';
+
+        if (!headersComplete) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: incomplete headers");
+            return false;
+        }
+
+        // Parse status code from "HTTP/1.x NNN"
+        int statusCode = 0;
+        const char* statusStart = strchr(headerBuf, ' ');
+        if (statusStart) {
+            statusCode = atoi(statusStart + 1);
+        }
+
+        CLogger::Get()->Write(FromHttpClient, LogDebug, "DownloadFile: status %d", statusCode);
+
+        // Handle redirects (301, 302, 303, 307, 308)
+        if (statusCode >= 300 && statusCode < 400) {
+            // Find Location header (case-insensitive search)
+            char redirectUrl[1024] = {0};
+            const char* p = headerBuf;
+            while (*p) {
+                if ((*p == 'L' || *p == 'l') &&
+                    strncasecmp(p, "Location:", 9) == 0) {
+                    p += 9;
+                    while (*p == ' ' || *p == '\t') p++;
+                    const char* end = strchr(p, '\r');
+                    if (!end) end = strchr(p, '\n');
+                    if (end) {
+                        size_t len = end - p;
+                        if (len < sizeof(redirectUrl)) {
+                            strncpy(redirectUrl, p, len);
+                            redirectUrl[len] = '\0';
+                        }
+                    }
+                    break;
+                }
+                // Skip to next line
+                const char* nl = strchr(p, '\n');
+                if (!nl) break;
+                p = nl + 1;
+            }
+
+            if (redirectUrl[0] == '\0') {
+                CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: redirect with no Location");
+                return false;
+            }
+
+            CLogger::Get()->Write(FromHttpClient, LogNotice, "DownloadFile: redirect -> %s", redirectUrl);
+            return DownloadFileInternal(redirectUrl, sdPath, redirectsLeft - 1);
+        }
+
+        if (statusCode != 200) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: HTTP %d", statusCode);
+            return false;
+        }
+
+        // Stream body to file
+        FIL file;
+        if (f_open(&file, sdPath, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: cannot create %s", sdPath);
+            return false;
+        }
+
+        u8 buf[4096];
+        unsigned totalWritten = 0;
+
+        while (true) {
+            int n = tlsSocket.Receive(buf, sizeof(buf), 0);
+            if (n <= 0) break;
+
+            UINT written;
+            if (f_write(&file, buf, n, &written) != FR_OK || written != (UINT)n) {
+                CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: write failed at %u bytes", totalWritten);
+                f_close(&file);
+                return false;
+            }
+            totalWritten += written;
+
+            // Sync periodically (every ~64KB)
+            if ((totalWritten % 65536) < sizeof(buf)) {
+                f_sync(&file);
+            }
+        }
+
+        f_close(&file);
+        CLogger::Get()->Write(FromHttpClient, LogNotice, "DownloadFile: wrote %u bytes to %s", totalWritten, sdPath);
+        return totalWritten > 0;
+
+    } else {
+        // Plain HTTP (non-TLS) path
+        CSocket socket(m_pNet, IPPROTO_TCP);
+        if (socket.Connect(ip, port) < 0) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: connect failed");
+            return false;
+        }
+
+        if (socket.Send(request, strlen(request), 0) < 0) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: send failed");
+            return false;
+        }
+
+        // Receive headers
+        char headerBuf[4096];
+        unsigned headerLen = 0;
+        bool headersComplete = false;
+
+        while (headerLen < sizeof(headerBuf) - 1) {
+            int n = socket.Receive(&headerBuf[headerLen], 1, 0);
+            if (n <= 0) break;
+            headerLen++;
+
+            if (headerLen >= 4 &&
+                headerBuf[headerLen - 4] == '\r' && headerBuf[headerLen - 3] == '\n' &&
+                headerBuf[headerLen - 2] == '\r' && headerBuf[headerLen - 1] == '\n') {
+                headersComplete = true;
+                break;
+            }
+        }
+        headerBuf[headerLen] = '\0';
+
+        if (!headersComplete) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: incomplete headers");
+            return false;
+        }
+
+        int statusCode = 0;
+        const char* statusStart = strchr(headerBuf, ' ');
+        if (statusStart) {
+            statusCode = atoi(statusStart + 1);
+        }
+
+        CLogger::Get()->Write(FromHttpClient, LogDebug, "DownloadFile: status %d", statusCode);
+
+        if (statusCode >= 300 && statusCode < 400) {
+            char redirectUrl[1024] = {0};
+            const char* p = headerBuf;
+            while (*p) {
+                if ((*p == 'L' || *p == 'l') &&
+                    strncasecmp(p, "Location:", 9) == 0) {
+                    p += 9;
+                    while (*p == ' ' || *p == '\t') p++;
+                    const char* end = strchr(p, '\r');
+                    if (!end) end = strchr(p, '\n');
+                    if (end) {
+                        size_t len = end - p;
+                        if (len < sizeof(redirectUrl)) {
+                            strncpy(redirectUrl, p, len);
+                            redirectUrl[len] = '\0';
+                        }
+                    }
+                    break;
+                }
+                const char* nl = strchr(p, '\n');
+                if (!nl) break;
+                p = nl + 1;
+            }
+
+            if (redirectUrl[0] == '\0') {
+                CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: redirect with no Location");
+                return false;
+            }
+
+            CLogger::Get()->Write(FromHttpClient, LogNotice, "DownloadFile: redirect -> %s", redirectUrl);
+            return DownloadFileInternal(redirectUrl, sdPath, redirectsLeft - 1);
+        }
+
+        if (statusCode != 200) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: HTTP %d", statusCode);
+            return false;
+        }
+
+        FIL file;
+        if (f_open(&file, sdPath, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+            CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: cannot create %s", sdPath);
+            return false;
+        }
+
+        u8 buf[4096];
+        unsigned totalWritten = 0;
+
+        while (true) {
+            int n = socket.Receive(buf, sizeof(buf), 0);
+            if (n <= 0) break;
+
+            UINT written;
+            if (f_write(&file, buf, n, &written) != FR_OK || written != (UINT)n) {
+                CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: write failed at %u bytes", totalWritten);
+                f_close(&file);
+                return false;
+            }
+            totalWritten += written;
+
+            if ((totalWritten % 65536) < sizeof(buf)) {
+                f_sync(&file);
+            }
+        }
+
+        f_close(&file);
+        CLogger::Get()->Write(FromHttpClient, LogNotice, "DownloadFile: wrote %u bytes to %s", totalWritten, sdPath);
+        return totalWritten > 0;
+    }
 }
 
 } // namespace mm

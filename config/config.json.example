@@ -4,6 +4,9 @@
     "zipcode": "64111",
     "units": "imperial"
   },
+  "update": {
+    "enabled": true
+  },
   "calendars": [
     {
       "url": "",

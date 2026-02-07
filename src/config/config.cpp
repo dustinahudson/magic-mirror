@@ -267,6 +267,8 @@ void Config::GetDefault(Config* pConfig)
 
     pConfig->nWidgets = 0;
     pConfig->nCalendars = 0;
+
+    pConfig->update.enabled = false;
 }
 
 // Simple JSON helper functions
@@ -454,6 +456,19 @@ boolean Config::LoadFromFile(const char* path, Config* pConfig)
     }
 
     CLogger::Get()->Write(FromConfig, LogNotice, "Loaded %d calendars", pConfig->nCalendars);
+
+    // Parse update section
+    const char* updateSection = FindKey(jsonBuffer, "update");
+    if (updateSection) {
+        const char* enabled = FindKey(updateSection, "enabled");
+        if (enabled) {
+            // Simple boolean parse: check for "true"
+            const char* ep = SkipWhitespace(enabled);
+            pConfig->update.enabled = (strncmp(ep, "true", 4) == 0);
+        }
+        CLogger::Get()->Write(FromConfig, LogNotice, "Update: enabled=%s",
+                             pConfig->update.enabled ? "true" : "false");
+    }
 
     return TRUE;
 }

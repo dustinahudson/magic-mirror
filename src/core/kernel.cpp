@@ -11,6 +11,7 @@
 #include "services/weather_service.h"
 #include "services/geocoding_service.h"
 #include "services/calendar_service.h"
+#include "services/update_service.h"
 #include "config/config.h"
 #include <circle/net/dnsclient.h>
 #include <circle/net/ntpclient.h>
@@ -39,7 +40,8 @@ CKernel::CKernel()
       m_Net(0, 0, 0, 0, "magicmirror", NetDeviceTypeWLAN),
       m_WPASupplicant(CONFIG_FILE),
       m_pTLS(nullptr),
-      m_bNetworkReady(FALSE)
+      m_bNetworkReady(FALSE),
+      m_bRebootRequested(FALSE)
 {
     m_ActLED.Blink(5);
 }
@@ -157,6 +159,12 @@ TShutdownMode CKernel::Run()
 {
     m_Logger.Write(FromKernel, LogNotice, "Magic Mirror starting...");
     m_Logger.Write(FromKernel, LogNotice, "Compile time: " __DATE__ " " __TIME__);
+#ifdef APP_VERSION
+    m_Logger.Write(FromKernel, LogNotice, "Version: " APP_VERSION);
+#endif
+
+    // Clean up stale partial downloads from previous failed update
+    f_unlink("SD:/kernel.new");
 
     if (m_bNetworkReady) {
         m_Logger.Write(FromKernel, LogNotice, "Waiting for network (60s timeout)...");
@@ -413,6 +421,10 @@ TShutdownMode CKernel::Run()
     unsigned lastWeatherRefresh = m_Timer.GetTime();
     const unsigned WEATHER_REFRESH_INTERVAL = 30 * 60;  // 30 minutes
 
+    // Update check tracking
+    unsigned lastUpdateCheck = 0;  // Check soon after boot
+    const unsigned UPDATE_CHECK_INTERVAL = 60 * 60;  // 1 hour
+
     unsigned nLoopCount = 0;
     while (1) {
         // Update widgets
@@ -512,6 +524,20 @@ TShutdownMode CKernel::Run()
             }
         }
 
+        // Update check — every hour
+        if (m_bNetworkReady && pHttpClient && config.update.enabled &&
+            (now - lastUpdateCheck) >= UPDATE_CHECK_INTERVAL) {
+
+            m_Logger.Write(FromKernel, LogNotice, "Checking for updates...");
+            mm::UpdateService updateService(pHttpClient);
+            if (updateService.CheckAndUpdate()) {
+                m_Logger.Write(FromKernel, LogNotice, "Update installed, rebooting...");
+                m_bRebootRequested = true;
+                break;
+            }
+            lastUpdateCheck = now;
+        }
+
         // Update LVGL - this handles all rendering
         m_LVGL.Update(FALSE);
 
@@ -524,5 +550,10 @@ TShutdownMode CKernel::Run()
         m_Scheduler.MsSleep(10);
     }
 
-    return ShutdownHalt;
+    // Clean up
+    delete pGeoService;
+    delete pWeatherService;
+    delete pHttpClient;
+
+    return m_bRebootRequested ? ShutdownReboot : ShutdownHalt;
 }

@@ -32,6 +32,7 @@ DEFINE += -DUSE_HDMI -DSCREEN_WIDTH=1920 -DSCREEN_HEIGHT=1080
 DEFINE += -DMBEDTLS_CONFIG_FILE='<circle-mbedtls/config-circle-mbedtls.h>'
 # Increase kernel max size from default 2MB to 4MB for larger assets
 DEFINE += -DKERNEL_MAX_SIZE=0x400000
+DEFINE += -DAPP_VERSION='"v0.1.0"'
 
 # Object files
 OBJS = src/main.o \
@@ -50,7 +51,8 @@ OBJS = src/main.o \
        src/services/weather_service.o \
        src/services/geocoding_service.o \
        src/services/calendar_service.o \
-       src/services/ics_stream_parser.o
+       src/services/ics_stream_parser.o \
+       src/services/update_service.o
 
 # Libraries - order matters for linking
 LIBS = $(CIRCLE_STDLIB_DIR)/src/circle-mbedtls/libcircle-mbedtls.a \

@@ -26,6 +26,7 @@ NC='\033[0m'
 
 # Pinned versions
 CIRCLE_STDLIB_URL="https://github.com/smuehlst/circle-stdlib.git"
+CIRCLE_STDLIB_COMMIT="83efe0b"  # Step 50.0.1 — LVGL 9.2.2, Circle 50.0.1
 STB_TRUETYPE_URL="https://raw.githubusercontent.com/nothings/stb/master/stb_truetype.h"
 DATE_URL="https://github.com/HowardHinnant/date.git"
 
@@ -43,11 +44,21 @@ setup_circle_stdlib() {
 
     if [ ! -f "$LIB_DIR/circle-stdlib/configure" ]; then
         echo "Adding circle-stdlib submodule..."
-        git -C "$SCRIPT_DIR" submodule add "$CIRCLE_STDLIB_URL" lib/circle-stdlib 2>/dev/null || true
-        git -C "$SCRIPT_DIR" submodule update --init lib/circle-stdlib
+        # Use submodule update if already registered, otherwise add fresh
+        if git -C "$SCRIPT_DIR" config --get "submodule.lib/circle-stdlib.url" > /dev/null 2>&1; then
+            echo "Submodule already registered, initializing..."
+            git -C "$SCRIPT_DIR" submodule update --init lib/circle-stdlib
+        else
+            git -C "$SCRIPT_DIR" submodule add "$CIRCLE_STDLIB_URL" lib/circle-stdlib
+            git -C "$SCRIPT_DIR" submodule update --init lib/circle-stdlib
+        fi
     else
         echo "circle-stdlib already present"
     fi
+
+    # Pin to known working commit
+    echo "Checking out pinned version ($CIRCLE_STDLIB_COMMIT)..."
+    git -C "$LIB_DIR/circle-stdlib" checkout "$CIRCLE_STDLIB_COMMIT"
 
     # Initialize nested submodules (circle, circle-newlib, mbedtls)
     echo "Initializing nested submodules..."
@@ -76,6 +87,23 @@ configure_circle_stdlib() {
 }
 
 # ---------------------------------------------------------------------------
+# 2b. Patch Circle sysconfig.h for 4MB kernel max size
+# ---------------------------------------------------------------------------
+patch_sysconfig() {
+    local sysconfig="$LIB_DIR/circle-stdlib/libs/circle/include/circle/sysconfig.h"
+
+    if [ ! -f "$sysconfig" ]; then
+        echo -e "${RED}sysconfig.h not found${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}=== Patching sysconfig.h (KERNEL_MAX_SIZE=4MB) ===${NC}"
+    sed -i 's/#define KERNEL_MAX_SIZE\t\t(2 \* MEGABYTE)/#define KERNEL_MAX_SIZE\t\t(4 * MEGABYTE)/' "$sysconfig"
+
+    echo -e "${GREEN}sysconfig.h patched${NC}"
+}
+
+# ---------------------------------------------------------------------------
 # 3. Build circle-stdlib (newlib, mbedTLS, Circle core)
 # ---------------------------------------------------------------------------
 build_circle_stdlib() {
@@ -93,6 +121,23 @@ build_circle_stdlib() {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. Build mbedTLS + circle-mbedtls wrapper
+# ---------------------------------------------------------------------------
+build_mbedtls() {
+    local stdlib_dir="$LIB_DIR/circle-stdlib"
+
+    if [ -f "$stdlib_dir/src/circle-mbedtls/libcircle-mbedtls.a" ]; then
+        echo -e "${YELLOW}mbedTLS already built, skipping${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}=== Building mbedTLS ===${NC}"
+    make -C "$stdlib_dir" mbedtls
+
+    echo -e "${GREEN}mbedTLS built${NC}"
+}
+
+# ---------------------------------------------------------------------------
 # 4. Build Circle addon libraries
 # ---------------------------------------------------------------------------
 build_addon_libs() {
@@ -100,6 +145,13 @@ build_addon_libs() {
     local addon_dir="$circle_dir/addon"
 
     echo -e "${YELLOW}=== Building Circle addon libraries ===${NC}"
+
+    # Enable required LVGL fonts before building
+    local lv_conf="$addon_dir/lvgl/lv_conf.h"
+    if [ -f "$lv_conf" ]; then
+        sed -i 's/#define LV_FONT_MONTSERRAT_32 0/#define LV_FONT_MONTSERRAT_32 1/' "$lv_conf"
+        sed -i 's/#define LV_FONT_MONTSERRAT_48 0/#define LV_FONT_MONTSERRAT_48 1/' "$lv_conf"
+    fi
 
     # wlan (includes hostap/wpa_supplicant)
     if [ ! -f "$addon_dir/wlan/libwlan.a" ]; then
@@ -242,7 +294,9 @@ echo ""
 
 setup_circle_stdlib
 configure_circle_stdlib
+patch_sysconfig
 build_circle_stdlib
+build_mbedtls
 build_addon_libs
 download_stb
 download_date

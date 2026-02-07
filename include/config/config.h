@@ -44,6 +44,10 @@ struct WeatherConfig {
     char units[16];
 };
 
+struct UpdateConfig {
+    bool enabled;
+};
+
 // Get timezone offset for a specific UTC timestamp (handles DST)
 int GetTimezoneOffset(const char* tzName, unsigned utcTimestamp);
 
@@ -55,6 +59,7 @@ struct Config {
     int nCalendars;
     WidgetConfig widgets[MAX_WIDGETS];
     int nWidgets;
+    UpdateConfig update;
 
     static boolean LoadFromFile(const char* path, Config* pConfig);
     static void GetDefault(Config* pConfig);

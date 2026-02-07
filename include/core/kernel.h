@@ -79,6 +79,7 @@ private:
     CircleMbedTLS::CTLSSimpleSupport* m_pTLS;
 
     bool m_bNetworkReady;
+    bool m_bRebootRequested;
 };
 
 #endif // KERNEL_H
