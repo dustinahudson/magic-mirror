@@ -40,6 +40,17 @@ private:
     lv_obj_t*   m_pHeader;
     lv_obj_t*   m_pEventList;
 
+    // Pre-allocated event row slots (avoids LVGL memory fragmentation)
+    static const int MAX_VISIBLE_EVENTS = 10;
+    struct EventRowSlot {
+        lv_obj_t* row;
+        lv_obj_t* colorDot;
+        lv_obj_t* titleLabel;
+        lv_obj_t* dateLabel;
+    };
+    EventRowSlot m_rowSlots[MAX_VISIBLE_EVENTS];
+    void CreateEventRowSlots();
+
     // State
     char        m_timezone[64];
     int         m_maxEvents;

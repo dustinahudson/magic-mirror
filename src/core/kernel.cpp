@@ -553,7 +553,12 @@ TShutdownMode CKernel::Run()
 
         // Log heartbeat every 60 seconds
         if (nLoopCount % 6000 == 0 && nLoopCount > 0) {
-            m_Logger.Write(FromKernel, LogNotice, "Running %u min", nLoopCount / 6000);
+            lv_mem_monitor_t mon;
+            lv_mem_monitor(&mon);
+            m_Logger.Write(FromKernel, LogNotice, "Running %u min | LVGL: %u/%u bytes free, largest=%u, frag=%u%%",
+                           nLoopCount / 6000,
+                           (unsigned)mon.free_size, (unsigned)mon.total_size,
+                           (unsigned)mon.free_biggest_size, (unsigned)mon.frag_pct);
         }
 
         nLoopCount++;

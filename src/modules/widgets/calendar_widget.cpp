@@ -5,9 +5,6 @@
 
 namespace mm {
 
-// Max events to display per day cell
-static const int MAX_EVENTS_PER_DAY = 4;
-
 CalendarWidget::CalendarWidget(lv_obj_t* parent, CTimer* timer)
     : WidgetBase("Calendar", parent, timer),
       m_pCalendarGrid(nullptr),
@@ -20,6 +17,7 @@ CalendarWidget::CalendarWidget(lv_obj_t* parent, CTimer* timer)
     memset(m_pDayLabels, 0, sizeof(m_pDayLabels));
     memset(m_pDayCells, 0, sizeof(m_pDayCells));
     memset(m_pDayNumbers, 0, sizeof(m_pDayNumbers));
+    memset(m_eventSlots, 0, sizeof(m_eventSlots));
     memset(m_events, 0, sizeof(m_events));
     strcpy(m_timezone, "UTC");  // Default
 }
@@ -90,7 +88,46 @@ void CalendarWidget::CreateUI()
             lv_obj_set_style_text_color(m_pDayNumbers[row][col], lv_color_make(180, 180, 180), LV_PART_MAIN);
             lv_obj_set_style_text_font(m_pDayNumbers[row][col], &lv_font_montserrat_22, LV_PART_MAIN);
             lv_label_set_text(m_pDayNumbers[row][col], "");
+
+            // Pre-allocate event slots
+            CreateEventSlots(m_pDayCells[row][col], row, col);
         }
+    }
+}
+
+void CalendarWidget::CreateEventSlots(lv_obj_t* cell, int row, int col)
+{
+    for (int i = 0; i < MAX_EVENTS_PER_DAY; i++) {
+        EventSlot& slot = m_eventSlots[row][col][i];
+
+        // Container row (for timed events: holds bullet + label)
+        slot.container = lv_obj_create(cell);
+        lv_obj_set_width(slot.container, lv_pct(100));
+        lv_obj_set_height(slot.container, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(slot.container, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(slot.container, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(slot.container, 0, LV_PART_MAIN);
+        lv_obj_clear_flag(slot.container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_layout(slot.container, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(slot.container, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_column(slot.container, 4, LV_PART_MAIN);
+        lv_obj_set_flex_align(slot.container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+        // Color bullet
+        slot.bullet = lv_obj_create(slot.container);
+        lv_obj_set_size(slot.bullet, 12, 12);
+        lv_obj_set_style_bg_opa(slot.bullet, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(slot.bullet, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(slot.bullet, 2, LV_PART_MAIN);
+        lv_obj_clear_flag(slot.bullet, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Event text label
+        slot.label = lv_label_create(slot.container);
+        lv_obj_set_flex_grow(slot.label, 1);
+        lv_obj_set_style_text_font(slot.label, &lv_font_montserrat_16, LV_PART_MAIN);
+
+        // Start hidden
+        lv_obj_add_flag(slot.container, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -187,9 +224,6 @@ void CalendarWidget::RenderRollingCalendar()
 
     for (int row = 0; row < 4; row++) {
         for (int col = 0; col < 7; col++) {
-            // Clear old events from cell
-            ClearDayEvents(m_pDayCells[row][col]);
-
             CString dayStr;
 
             // First day of month: show "Mon D" format
@@ -215,7 +249,7 @@ void CalendarWidget::RenderRollingCalendar()
             }
 
             // Render events for this day
-            RenderDayEvents(m_pDayCells[row][col], year, month, day);
+            RenderDayEvents(m_pDayCells[row][col], row, col, year, month, day);
 
             // Move to next day
             day++;
@@ -367,90 +401,71 @@ int CalendarWidget::GetEventsForDay(unsigned year, unsigned month, unsigned day,
     return count;
 }
 
-void CalendarWidget::ClearDayEvents(lv_obj_t* cell)
-{
-    // Delete all children except the first one (day number label)
-    uint32_t childCount = lv_obj_get_child_count(cell);
-    for (int i = childCount - 1; i > 0; i--) {
-        lv_obj_t* child = lv_obj_get_child(cell, i);
-        if (child) {
-            lv_obj_delete(child);
-        }
-    }
-}
-
-void CalendarWidget::RenderDayEvents(lv_obj_t* cell, unsigned year, unsigned month, unsigned day)
+void CalendarWidget::RenderDayEvents(lv_obj_t* cell, int row, int col,
+                                      unsigned year, unsigned month, unsigned day)
 {
     CalendarEvent dayEvents[MAX_EVENTS_PER_DAY];
     int eventCount = GetEventsForDay(year, month, day, dayEvents, MAX_EVENTS_PER_DAY);
 
-    for (int i = 0; i < eventCount; i++) {
-        const CalendarEvent& event = dayEvents[i];
+    for (int i = 0; i < MAX_EVENTS_PER_DAY; i++) {
+        EventSlot& slot = m_eventSlots[row][col][i];
 
-        // Get event color (prefer event color, fallback to calendar color)
+        if (i >= eventCount) {
+            // Hide unused slots
+            lv_obj_add_flag(slot.container, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
+        const CalendarEvent& event = dayEvents[i];
         const char* colorStr = (event.eventColor[0] != '\0') ? event.eventColor : event.calendarColor;
         lv_color_t eventColor = ParseHexColor(colorStr);
 
-        if (event.allDay) {
-            // All-day event: colored background with contrast text
-            lv_obj_t* eventLabel = lv_label_create(cell);
-            lv_obj_set_width(eventLabel, lv_pct(100));
-            lv_obj_set_style_bg_color(eventLabel, eventColor, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(eventLabel, LV_OPA_COVER, LV_PART_MAIN);
-            lv_obj_set_style_pad_left(eventLabel, 4, LV_PART_MAIN);
-            lv_obj_set_style_pad_right(eventLabel, 4, LV_PART_MAIN);
-            lv_obj_set_style_pad_top(eventLabel, 4, LV_PART_MAIN);
-            lv_obj_set_style_pad_bottom(eventLabel, 4, LV_PART_MAIN);
-            lv_obj_set_style_radius(eventLabel, 3, LV_PART_MAIN);
+        lv_obj_clear_flag(slot.container, LV_OBJ_FLAG_HIDDEN);
 
-            // Choose text color based on background brightness
+        if (event.allDay) {
+            // All-day: hide bullet, style container as colored background
+            lv_obj_add_flag(slot.bullet, LV_OBJ_FLAG_HIDDEN);
+
+            lv_obj_set_style_bg_color(slot.container, eventColor, LV_PART_MAIN);
+            lv_obj_set_style_bg_opa(slot.container, LV_OPA_COVER, LV_PART_MAIN);
+            lv_obj_set_style_pad_left(slot.container, 4, LV_PART_MAIN);
+            lv_obj_set_style_pad_right(slot.container, 4, LV_PART_MAIN);
+            lv_obj_set_style_pad_top(slot.container, 4, LV_PART_MAIN);
+            lv_obj_set_style_pad_bottom(slot.container, 4, LV_PART_MAIN);
+            lv_obj_set_style_radius(slot.container, 3, LV_PART_MAIN);
+
             if (UseDarkText(eventColor)) {
-                lv_obj_set_style_text_color(eventLabel, lv_color_make(0, 0, 0), LV_PART_MAIN);
+                lv_obj_set_style_text_color(slot.label, lv_color_make(0, 0, 0), LV_PART_MAIN);
             } else {
-                lv_obj_set_style_text_color(eventLabel, lv_color_make(255, 255, 255), LV_PART_MAIN);
+                lv_obj_set_style_text_color(slot.label, lv_color_make(255, 255, 255), LV_PART_MAIN);
             }
 
-            lv_obj_set_style_text_font(eventLabel, &lv_font_montserrat_16, LV_PART_MAIN);
-            lv_label_set_long_mode(eventLabel, LV_LABEL_LONG_DOT);
-            lv_obj_set_style_max_height(eventLabel, 28, LV_PART_MAIN);  // Single line + padding for 16pt
-            lv_label_set_text(eventLabel, event.title);
+            lv_label_set_long_mode(slot.label, LV_LABEL_LONG_DOT);
+            lv_obj_set_style_max_height(slot.label, 28, LV_PART_MAIN);
+            lv_label_set_text(slot.label, event.title);
         } else {
-            // Timed event: bullet + time + title (wraps to 2 lines max)
-            lv_obj_t* eventRow = lv_obj_create(cell);
-            lv_obj_set_width(eventRow, lv_pct(100));
-            lv_obj_set_height(eventRow, LV_SIZE_CONTENT);
-            lv_obj_set_style_bg_opa(eventRow, LV_OPA_TRANSP, LV_PART_MAIN);
-            lv_obj_set_style_border_width(eventRow, 0, LV_PART_MAIN);
-            lv_obj_set_style_pad_all(eventRow, 0, LV_PART_MAIN);
-            lv_obj_clear_flag(eventRow, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_set_layout(eventRow, LV_LAYOUT_FLEX);
-            lv_obj_set_flex_flow(eventRow, LV_FLEX_FLOW_ROW);
-            lv_obj_set_style_pad_column(eventRow, 4, LV_PART_MAIN);
-            lv_obj_set_flex_align(eventRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+            // Timed event: show bullet, transparent container
+            lv_obj_clear_flag(slot.bullet, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(slot.bullet, eventColor, LV_PART_MAIN);
 
-            // Color bullet (match font height ~14px)
-            lv_obj_t* bullet = lv_obj_create(eventRow);
-            lv_obj_set_size(bullet, 12, 12);
-            lv_obj_set_style_bg_color(bullet, eventColor, LV_PART_MAIN);
-            lv_obj_set_style_bg_opa(bullet, LV_OPA_COVER, LV_PART_MAIN);
-            lv_obj_set_style_border_width(bullet, 0, LV_PART_MAIN);
-            lv_obj_set_style_radius(bullet, 2, LV_PART_MAIN);
-            lv_obj_clear_flag(bullet, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_style_bg_opa(slot.container, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_pad_left(slot.container, 0, LV_PART_MAIN);
+            lv_obj_set_style_pad_right(slot.container, 0, LV_PART_MAIN);
+            lv_obj_set_style_pad_top(slot.container, 0, LV_PART_MAIN);
+            lv_obj_set_style_pad_bottom(slot.container, 0, LV_PART_MAIN);
+            lv_obj_set_style_radius(slot.container, 0, LV_PART_MAIN);
 
-            // Format time and title
+            lv_obj_set_style_text_color(slot.label, lv_color_make(200, 200, 200), LV_PART_MAIN);
+
             char timeStr[16];
             FormatShortTime(event.startTime, timeStr, sizeof(timeStr));
 
             CString eventText;
             eventText.Format("%s %s", timeStr, event.title);
 
-            lv_obj_t* eventLabel = lv_label_create(eventRow);
-            lv_obj_set_flex_grow(eventLabel, 1);
-            lv_obj_set_style_text_color(eventLabel, lv_color_make(200, 200, 200), LV_PART_MAIN);
-            lv_obj_set_style_text_font(eventLabel, &lv_font_montserrat_16, LV_PART_MAIN);
-            lv_label_set_long_mode(eventLabel, LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_max_height(eventLabel, 40, LV_PART_MAIN);  // ~2 lines at 16px
-            lv_label_set_text(eventLabel, (const char*)eventText);
+            lv_label_set_long_mode(slot.label, LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_max_height(slot.label, 40, LV_PART_MAIN);
+            lv_label_set_text(slot.label, (const char*)eventText);
         }
     }
 }

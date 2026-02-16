@@ -13,6 +13,7 @@ UpcomingEventsWidget::UpcomingEventsWidget(lv_obj_t* parent, CTimer* timer)
       m_eventCount(0),
       m_lastRenderDay(0)
 {
+    memset(m_rowSlots, 0, sizeof(m_rowSlots));
     memset(m_events, 0, sizeof(m_events));
     strcpy(m_timezone, "UTC");
 }
@@ -72,6 +73,53 @@ void UpcomingEventsWidget::CreateUI()
     lv_obj_set_flex_grow(m_pEventList, 1);  // Fill remaining vertical space
     lv_obj_set_layout(m_pEventList, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(m_pEventList, LV_FLEX_FLOW_COLUMN);
+
+    // Pre-allocate event row slots
+    CreateEventRowSlots();
+}
+
+void UpcomingEventsWidget::CreateEventRowSlots()
+{
+    int rowHeight = 30;
+
+    for (int i = 0; i < MAX_VISIBLE_EVENTS; i++) {
+        EventRowSlot& slot = m_rowSlots[i];
+
+        // Row container
+        slot.row = lv_obj_create(m_pEventList);
+        lv_obj_set_width(slot.row, lv_pct(100));
+        lv_obj_set_height(slot.row, rowHeight);
+        lv_obj_set_style_bg_opa(slot.row, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(slot.row, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(slot.row, 0, LV_PART_MAIN);
+        lv_obj_clear_flag(slot.row, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Color dot
+        slot.colorDot = lv_obj_create(slot.row);
+        lv_obj_set_size(slot.colorDot, 8, 8);
+        lv_obj_set_style_bg_opa(slot.colorDot, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(slot.colorDot, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(slot.colorDot, 2, LV_PART_MAIN);
+        lv_obj_clear_flag(slot.colorDot, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(slot.colorDot, LV_ALIGN_LEFT_MID, 0, 0);
+
+        // Title label
+        slot.titleLabel = lv_label_create(slot.row);
+        lv_obj_set_style_text_color(slot.titleLabel, lv_color_make(255, 255, 255), LV_PART_MAIN);
+        lv_obj_set_style_text_font(slot.titleLabel, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_label_set_long_mode(slot.titleLabel, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_max_height(slot.titleLabel, 24, LV_PART_MAIN);
+        lv_obj_align(slot.titleLabel, LV_ALIGN_LEFT_MID, 16, 0);
+
+        // Date label
+        slot.dateLabel = lv_label_create(slot.row);
+        lv_obj_set_style_text_color(slot.dateLabel, lv_color_make(150, 150, 150), LV_PART_MAIN);
+        lv_obj_set_style_text_font(slot.dateLabel, &lv_font_montserrat_16, LV_PART_MAIN);
+        lv_obj_align(slot.dateLabel, LV_ALIGN_RIGHT_MID, 0, 0);
+
+        // Start hidden
+        lv_obj_add_flag(slot.row, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void UpcomingEventsWidget::Update()
@@ -233,9 +281,6 @@ void UpcomingEventsWidget::FormatEventDate(const CalendarEvent& event, unsigned 
 
 void UpcomingEventsWidget::RenderEvents()
 {
-    // Clear existing event rows
-    lv_obj_clean(m_pEventList);
-
     // Get current time
     unsigned now = m_pTimer->GetTime();
 
@@ -243,14 +288,10 @@ void UpcomingEventsWidget::RenderEvents()
     int tzOffset = GetTimezoneOffset(m_timezone, now);
 
     // Helper lambda to get sortable time value for an event
-    // All-day events use UTC days, timed events use local time
     auto getSortTime = [tzOffset](const CalendarEvent& event) -> unsigned {
         if (event.allDay) {
-            // All-day events: stored as midnight UTC on the date
-            // Return as-is for sorting - they sort at start of their UTC day
             return event.startTime;
         } else {
-            // Timed events: convert to local time for proper day ordering
             return (unsigned)((int)event.startTime + tzOffset);
         }
     };
@@ -260,27 +301,21 @@ void UpcomingEventsWidget::RenderEvents()
     unsigned nowDays = nowLocal / 86400;
 
     // Sort events by date/time (ascending)
-    // Simple insertion sort since we have limited events
     CalendarEvent sorted[MAX_EVENTS];
     int sortedCount = 0;
 
     // Only include events in the future
     for (int i = 0; i < m_eventCount; i++) {
-        // Skip past events (with a bit of buffer for ongoing events)
         if (!m_events[i].allDay && m_events[i].startTime < now - 3600) {
-            continue;  // Skip events more than 1 hour in the past
+            continue;
         }
         if (m_events[i].allDay) {
-            // For all-day events, skip if the day has passed
-            // All-day events are stored as midnight UTC on the date - use UTC days directly
             unsigned eventDays = m_events[i].startTime / 86400;
             if (eventDays < nowDays) continue;
         }
 
-        // Get sortable time for this event
         unsigned sortTime = getSortTime(m_events[i]);
 
-        // Insert in sorted order using sortable time
         int j = sortedCount;
         while (j > 0 && getSortTime(sorted[j-1]) > sortTime) {
             sorted[j] = sorted[j-1];
@@ -292,22 +327,28 @@ void UpcomingEventsWidget::RenderEvents()
         if (sortedCount >= MAX_EVENTS) break;
     }
 
-    // Calculate row height and visible count based on available space
-    int rowHeight = 30;  // Sized for 18pt font with comfortable spacing
-    int rowGap = 4;  // Matches pad_row set on m_pEventList
+    // Calculate visible count based on available space
+    int rowHeight = 30;
+    int rowGap = 4;
     int availableHeight = lv_obj_get_content_height(m_pEventList);
     int visibleRows = (availableHeight > 0) ? (availableHeight + rowGap) / (rowHeight + rowGap) : m_maxEvents;
+    if (visibleRows > MAX_VISIBLE_EVENTS) visibleRows = MAX_VISIBLE_EVENTS;
     if (visibleRows > m_maxEvents) visibleRows = m_maxEvents;
     if (visibleRows < 1) visibleRows = 1;
 
-    // Render each event
     int eventsToShow = (sortedCount < visibleRows) ? sortedCount : visibleRows;
-    int fadeStartRow = eventsToShow - 3;  // Start fading 3 rows before end
+    int fadeStartRow = eventsToShow - 3;
 
-    // Get container width for title sizing (container has its size set already)
     int containerWidth = lv_obj_get_content_width(m_pContainer);
 
-    for (int i = 0; i < eventsToShow; i++) {
+    for (int i = 0; i < MAX_VISIBLE_EVENTS; i++) {
+        EventRowSlot& slot = m_rowSlots[i];
+
+        if (i >= eventsToShow) {
+            lv_obj_add_flag(slot.row, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
         const CalendarEvent& event = sorted[i];
 
         // Calculate opacity for fade effect
@@ -317,52 +358,26 @@ void UpcomingEventsWidget::RenderEvents()
             if (opacity < 80) opacity = 80;
         }
 
-        // Create event row container
-        lv_obj_t* row = lv_obj_create(m_pEventList);
-        lv_obj_set_width(row, lv_pct(100));
-        lv_obj_set_height(row, rowHeight);
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_set_style_border_width(row, 0, LV_PART_MAIN);
-        lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(slot.row, LV_OBJ_FLAG_HIDDEN);
 
-        // Calendar color indicator (small square)
+        // Update color dot
         const char* colorStr = (event.eventColor[0] != '\0') ? event.eventColor : event.calendarColor;
         lv_color_t eventColor = ParseHexColor(colorStr);
+        lv_obj_set_style_bg_color(slot.colorDot, eventColor, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(slot.colorDot, opacity, LV_PART_MAIN);
 
-        lv_obj_t* colorDot = lv_obj_create(row);
-        lv_obj_set_size(colorDot, 8, 8);
-        lv_obj_set_style_bg_color(colorDot, eventColor, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(colorDot, opacity, LV_PART_MAIN);
-        lv_obj_set_style_border_width(colorDot, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(colorDot, 2, LV_PART_MAIN);
-        lv_obj_clear_flag(colorDot, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_align(colorDot, LV_ALIGN_LEFT_MID, 0, 0);
+        // Update title
+        int titleWidth = containerWidth - 140;
+        if (titleWidth < 50) titleWidth = 50;
+        lv_obj_set_width(slot.titleLabel, titleWidth);
+        lv_obj_set_style_text_opa(slot.titleLabel, opacity, LV_PART_MAIN);
+        lv_label_set_text(slot.titleLabel, event.title);
 
-        // Event title - use container width for sizing
-        int titleWidth = containerWidth - 140;  // Leave room for color dot (16) + date (~120)
-        if (titleWidth < 50) titleWidth = 50;  // Minimum width
-
-        lv_obj_t* titleLabel = lv_label_create(row);
-        lv_obj_set_style_text_color(titleLabel, lv_color_make(255, 255, 255), LV_PART_MAIN);
-        lv_obj_set_style_text_opa(titleLabel, opacity, LV_PART_MAIN);
-        lv_obj_set_style_text_font(titleLabel, &lv_font_montserrat_18, LV_PART_MAIN);
-        lv_label_set_long_mode(titleLabel, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(titleLabel, titleWidth);
-        lv_obj_set_style_max_height(titleLabel, 24, LV_PART_MAIN);  // Single line height for 18pt
-        lv_label_set_text(titleLabel, event.title);
-        lv_obj_align(titleLabel, LV_ALIGN_LEFT_MID, 16, 0);
-
-        // Event date (right-aligned)
+        // Update date
         char dateStr[32];
         FormatEventDate(event, now, dateStr, sizeof(dateStr));
-
-        lv_obj_t* dateLabel = lv_label_create(row);
-        lv_obj_set_style_text_color(dateLabel, lv_color_make(150, 150, 150), LV_PART_MAIN);
-        lv_obj_set_style_text_opa(dateLabel, opacity, LV_PART_MAIN);
-        lv_obj_set_style_text_font(dateLabel, &lv_font_montserrat_16, LV_PART_MAIN);
-        lv_label_set_text(dateLabel, dateStr);
-        lv_obj_align(dateLabel, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_text_opa(slot.dateLabel, opacity, LV_PART_MAIN);
+        lv_label_set_text(slot.dateLabel, dateStr);
     }
 }
 

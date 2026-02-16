@@ -51,14 +51,24 @@ private:
     void FormatShortTime(unsigned unixTime, char* buffer, int bufSize);
 
     // Event rendering
-    void RenderDayEvents(lv_obj_t* cell, unsigned year, unsigned month, unsigned day);
-    void ClearDayEvents(lv_obj_t* cell);
+    void RenderDayEvents(lv_obj_t* cell, int row, int col,
+                         unsigned year, unsigned month, unsigned day);
+    void CreateEventSlots(lv_obj_t* cell, int row, int col);
 
     // LVGL objects
     lv_obj_t*   m_pCalendarGrid;
     lv_obj_t*   m_pDayLabels[7];         // Sun-Sat headers
     lv_obj_t*   m_pDayCells[4][7];       // 4 weeks x 7 days - containers for day content
     lv_obj_t*   m_pDayNumbers[4][7];     // Day number labels
+
+    // Pre-allocated event slots per day cell (avoids LVGL memory fragmentation)
+    static const int MAX_EVENTS_PER_DAY = 4;
+    struct EventSlot {
+        lv_obj_t* container;  // Row container (used for timed events)
+        lv_obj_t* bullet;     // Color bullet (hidden for all-day)
+        lv_obj_t* label;      // Event text label
+    };
+    EventSlot   m_eventSlots[4][7][MAX_EVENTS_PER_DAY];
 
     // State
     char        m_timezone[64];
