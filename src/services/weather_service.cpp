@@ -53,7 +53,8 @@ bool WeatherService::FetchWeather(float latitude, float longitude, WeatherData* 
 
     CLogger::Get()->Write(FromWeather, LogDebug, "Fetching weather from %s%s", WEATHER_HOST, (const char*)path);
 
-    HttpResponse response;
+    // Use static to avoid 512KB stack allocation
+    static HttpResponse response;
     if (!m_pHttpClient->Get(WEATHER_HOST, (const char*)path, true, &response)) {
         CLogger::Get()->Write(FromWeather, LogError, "Failed to fetch weather data");
         return false;
@@ -89,7 +90,8 @@ bool WeatherService::FetchForecast(float latitude, float longitude, ForecastDay*
 
     CLogger::Get()->Write(FromWeather, LogDebug, "Fetching forecast from %s%s", WEATHER_HOST, (const char*)path);
 
-    HttpResponse response;
+    // Use static to avoid 512KB stack allocation
+    static HttpResponse response;
     if (!m_pHttpClient->Get(WEATHER_HOST, (const char*)path, true, &response)) {
         CLogger::Get()->Write(FromWeather, LogError, "Failed to fetch forecast data");
         return false;
