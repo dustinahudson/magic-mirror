@@ -42,7 +42,8 @@ CKernel::CKernel()
       m_WPASupplicant(CONFIG_FILE),
       m_pTLS(nullptr),
       m_bNetworkReady(FALSE),
-      m_bRebootRequested(FALSE)
+      m_bRebootRequested(FALSE),
+      m_bWifiDownLastRefresh(false)
 {
     m_ActLED.Blink(5);
 }
@@ -171,6 +172,10 @@ TShutdownMode CKernel::Run()
     m_Logger.Write(FromKernel, LogNotice, "Version: " APP_VERSION);
 #endif
 
+    // Start hardware watchdog - auto-reboots if main loop stalls (e.g., stuck TLS connection)
+    m_Watchdog.Start(15);
+    m_Logger.Write(FromKernel, LogNotice, "Watchdog started (15s timeout)");
+
     // Clean up stale partial downloads from previous failed update
     f_unlink("SD:/kernel.new");
 
@@ -196,6 +201,7 @@ TShutdownMode CKernel::Run()
                 m_bNetworkReady = FALSE;
                 break;
             }
+            m_Watchdog.Start(15);
             m_Scheduler.MsSleep(100);
         }
 
@@ -226,6 +232,8 @@ TShutdownMode CKernel::Run()
         m_Logger.Write(FromKernel, LogNotice, "Starting without network");
     }
 
+    m_Watchdog.Start(15);
+
     // Set up the main screen
     m_Logger.Write(FromKernel, LogNotice, "Creating UI...");
 
@@ -251,8 +259,6 @@ TShutdownMode CKernel::Run()
     // Create DateTime widget - stacks at top of left column
     mm::DateTimeWidget dateTimeWidget(leftColumn, &m_Timer);
     dateTimeWidget.SetContentSize();  // Size to content for flex stacking
-    // Central time zone offset: UTC-6 hours = -21600 seconds
-    dateTimeWidget.SetTimezoneOffset(-6 * 3600);
     dateTimeWidget.Initialize();
 
     m_Logger.Write(FromKernel, LogNotice, "DateTime widget created");
@@ -268,7 +274,8 @@ TShutdownMode CKernel::Run()
     m_Logger.Write(FromKernel, LogNotice, "Config loaded: zipcode=%s, units=%s",
                    config.weather.zipcode, config.weather.units);
 
-    // Set timezone on weather widget from config
+    // Set timezone on widgets from config
+    dateTimeWidget.SetTimezone(config.timezone);
     weatherWidget.SetTimezone(config.timezone);
 
     // Fetch real weather data if network is available
@@ -280,6 +287,7 @@ TShutdownMode CKernel::Run()
     if (m_bNetworkReady && m_pTLS) {
         m_Logger.Write(FromKernel, LogNotice, "Creating HTTP client...");
         pHttpClient = new mm::HttpClient(&m_Net, m_pTLS);
+        mm::HttpClient::SetWatchdog(&m_Watchdog);
 
         // Geocode the zipcode from config
         pGeoService = new mm::GeocodingService(pHttpClient);
@@ -457,78 +465,109 @@ TShutdownMode CKernel::Run()
             }
         }
 
-        if (m_bNetworkReady && pHttpClient && config.nCalendars > 0 &&
-            (now - lastCalendarRefresh) >= CALENDAR_REFRESH_INTERVAL) {
+        if ((now - lastCalendarRefresh) >= CALENDAR_REFRESH_INTERVAL) {
+            // WiFi monitoring: two-strike reboot logic
+            if (m_bNetworkReady && !m_Net.IsRunning()) {
+                if (!m_bWifiDownLastRefresh) {
+                    m_bWifiDownLastRefresh = true;
+                    m_Logger.Write(FromKernel, LogWarning, "WiFi down, will reboot if still down next interval");
+                } else {
+                    m_Logger.Write(FromKernel, LogError, "WiFi down for 2 consecutive intervals, rebooting...");
+                    m_bRebootRequested = true;
+                    break;
+                }
+                lastCalendarRefresh = now;
+            } else {
+                if (m_bNetworkReady) {
+                    m_bWifiDownLastRefresh = false;
+                }
 
-            m_Logger.Write(FromKernel, LogNotice, "Refreshing calendars...");
+                if (m_bNetworkReady && pHttpClient && config.nCalendars > 0) {
+                    m_Logger.Write(FromKernel, LogNotice, "Refreshing calendars...");
 
-            mm::CalendarService calService(pHttpClient);
-            unsigned threeMonths = 90 * 24 * 60 * 60;
-            calService.SetTimeWindow(now, now + threeMonths);
+                    mm::CalendarService calService(pHttpClient);
+                    unsigned threeMonths = 90 * 24 * 60 * 60;
+                    calService.SetTimeWindow(now, now + threeMonths);
 
-            static mm::CalendarEvent refreshEvents[200];
-            int totalEvents = 0;
+                    static mm::CalendarEvent refreshEvents[200];
+                    int totalEvents = 0;
 
-            for (int i = 0; i < config.nCalendars && totalEvents < 200; i++) {
-                totalEvents = calService.FetchCalendar(config.calendars[i],
-                                                        refreshEvents, 200, totalEvents);
+                    for (int i = 0; i < config.nCalendars && totalEvents < 200; i++) {
+                        totalEvents = calService.FetchCalendar(config.calendars[i],
+                                                                refreshEvents, 200, totalEvents);
+                    }
+
+                    if (totalEvents > 0) {
+                        // At least one calendar returned events — update widgets
+                        calendarWidget.ClearEvents();
+                        upcomingEventsWidget.ClearEvents();
+                        for (int i = 0; i < totalEvents; i++) {
+                            calendarWidget.AddEvent(refreshEvents[i]);
+                            upcomingEventsWidget.AddEvent(refreshEvents[i]);
+                        }
+                        calendarWidget.Refresh();
+                        upcomingEventsWidget.Refresh();
+
+                        icsEventCount = totalEvents;
+                        lastCalendarRefresh = now;
+                        m_Logger.Write(FromKernel, LogNotice, "Calendar refresh: %d events", totalEvents);
+                    } else {
+                        // All calendars failed — backoff, retry in 30s
+                        lastCalendarRefresh = now - CALENDAR_REFRESH_INTERVAL + 30;
+                        m_Logger.Write(FromKernel, LogWarning, "All calendars failed, retry in 30s");
+                    }
+
+                    // Update status display
+                    CString ipString;
+                    m_Net.GetConfig()->GetIPAddress()->Format(&ipString);
+                    lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d | " APP_VERSION,
+                                          (const char*)ipString, config.nCalendars, icsEventCount);
+                } else {
+                    lastCalendarRefresh = now;
+                }
             }
-
-            // Clear old events and add new ones to both widgets
-            calendarWidget.ClearEvents();
-            upcomingEventsWidget.ClearEvents();
-            for (int i = 0; i < totalEvents; i++) {
-                calendarWidget.AddEvent(refreshEvents[i]);
-                upcomingEventsWidget.AddEvent(refreshEvents[i]);
-            }
-            calendarWidget.Refresh();  // Force re-render with new events
-            upcomingEventsWidget.Refresh();
-
-            icsEventCount = totalEvents;
-            lastCalendarRefresh = now;
-
-            m_Logger.Write(FromKernel, LogNotice, "Calendar refresh: %d events", totalEvents);
-
-            // Update status display
-            CString ipString;
-            m_Net.GetConfig()->GetIPAddress()->Format(&ipString);
-            lv_label_set_text_fmt(status, "%s | Cals:%d Evt:%d | " APP_VERSION,
-                                  (const char*)ipString, config.nCalendars, icsEventCount);
         }
 
         // Weather refresh
         if (m_bNetworkReady && pWeatherService && location.valid &&
             (now - lastWeatherRefresh) >= WEATHER_REFRESH_INTERVAL) {
 
-            m_Logger.Write(FromKernel, LogNotice, "Weather sync...");
-
-            bool weatherUpdated = false;
-
-            // Fetch current weather
-            mm::WeatherData weatherData;
-            if (pWeatherService->FetchWeather(location.latitude, location.longitude, &weatherData)) {
-                weatherWidget.SetWeatherData(weatherData);
-                weatherUpdated = true;
-                m_Logger.Write(FromKernel, LogNotice, "Weather updated: %.1f%s %s",
-                              weatherData.temperature,
-                              weatherData.isMetric ? "C" : "F",
-                              weatherData.condition);
+            if (!m_Net.IsRunning()) {
+                m_Logger.Write(FromKernel, LogWarning, "WiFi down, skipping weather refresh");
+                lastWeatherRefresh = now - WEATHER_REFRESH_INTERVAL + 60;
             } else {
-                m_Logger.Write(FromKernel, LogWarning, "Weather fetch failed");
-            }
+                m_Logger.Write(FromKernel, LogNotice, "Weather sync...");
 
-            // Fetch forecast
-            mm::ForecastDay forecast[5];
-            int forecastCount = 0;
-            if (pWeatherService->FetchForecast(location.latitude, location.longitude, forecast, &forecastCount)) {
-                weatherWidget.SetForecast(forecast, forecastCount);
-                weatherUpdated = true;
-                m_Logger.Write(FromKernel, LogNotice, "Forecast updated: %d days", forecastCount);
-            }
+                bool weatherUpdated = false;
 
-            // Only advance timer on success so failed fetches are retried
-            if (weatherUpdated) {
-                lastWeatherRefresh = now;
+                // Fetch current weather
+                mm::WeatherData weatherData;
+                if (pWeatherService->FetchWeather(location.latitude, location.longitude, &weatherData)) {
+                    weatherWidget.SetWeatherData(weatherData);
+                    weatherUpdated = true;
+                    m_Logger.Write(FromKernel, LogNotice, "Weather updated: %.1f%s %s",
+                                  weatherData.temperature,
+                                  weatherData.isMetric ? "C" : "F",
+                                  weatherData.condition);
+                } else {
+                    m_Logger.Write(FromKernel, LogWarning, "Weather fetch failed");
+                }
+
+                // Fetch forecast
+                mm::ForecastDay forecast[5];
+                int forecastCount = 0;
+                if (pWeatherService->FetchForecast(location.latitude, location.longitude, forecast, &forecastCount)) {
+                    weatherWidget.SetForecast(forecast, forecastCount);
+                    weatherUpdated = true;
+                    m_Logger.Write(FromKernel, LogNotice, "Forecast updated: %d days", forecastCount);
+                }
+
+                if (weatherUpdated) {
+                    lastWeatherRefresh = now;
+                } else {
+                    // Backoff on total failure: retry in 60s
+                    lastWeatherRefresh = now - WEATHER_REFRESH_INTERVAL + 60;
+                }
             }
         }
 
@@ -536,14 +575,18 @@ TShutdownMode CKernel::Run()
         if (m_bNetworkReady && pHttpClient && config.update.enabled &&
             (now - lastUpdateCheck) >= UPDATE_CHECK_INTERVAL) {
 
-            m_Logger.Write(FromKernel, LogNotice, "Checking for updates...");
-            mm::UpdateService updateService(pHttpClient);
-            if (updateService.CheckAndUpdate()) {
-                m_Logger.Write(FromKernel, LogNotice, "Update installed, rebooting...");
-                m_bRebootRequested = true;
-                break;
+            if (!m_Net.IsRunning()) {
+                m_Logger.Write(FromKernel, LogWarning, "WiFi down, skipping update check");
+            } else {
+                m_Logger.Write(FromKernel, LogNotice, "Checking for updates...");
+                mm::UpdateService updateService(pHttpClient);
+                if (updateService.CheckAndUpdate()) {
+                    m_Logger.Write(FromKernel, LogNotice, "Update installed, rebooting...");
+                    m_bRebootRequested = true;
+                    break;
+                }
             }
-            lastUpdateCheck = now;
+            lastUpdateCheck = now;  // Always advance to avoid hammering
         }
 
         // Flush log events to file
@@ -555,13 +598,18 @@ TShutdownMode CKernel::Run()
         // Log heartbeat every 60 seconds
         if (nLoopCount % 6000 == 0 && nLoopCount > 0) {
             size_t heapFree = CMemorySystem::Get()->GetHeapFreeSpace(HEAP_ANY);
-            m_Logger.Write(FromKernel, LogNotice, "Running %u min | Heap free: %u KB",
-                           nLoopCount / 6000, (unsigned)(heapFree / 1024));
+            m_Logger.Write(FromKernel, LogNotice, "Running %u min | Heap free: %u KB | WiFi: %s",
+                           nLoopCount / 6000, (unsigned)(heapFree / 1024),
+                           m_Net.IsRunning() ? "up" : "DOWN");
         }
 
         nLoopCount++;
+        m_Watchdog.Start(15);
         m_Scheduler.MsSleep(10);
     }
+
+    // Stop watchdog before controlled shutdown
+    m_Watchdog.Stop();
 
     // Flush and close log file before shutdown
     m_FileLogger.Close();

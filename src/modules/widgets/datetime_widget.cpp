@@ -12,6 +12,7 @@ DateTimeWidget::DateTimeWidget(lv_obj_t* parent, CTimer* timer)
       m_timezoneOffset(0),
       m_lastUpdateTime(0)
 {
+    m_timezone[0] = '\0';
     m_dateBuffer[0] = '\0';
     m_timeBuffer[0] = '\0';
     m_secondsBuffer[0] = '\0';
@@ -77,9 +78,17 @@ void DateTimeWidget::Update()
     }
 }
 
+void DateTimeWidget::SetTimezone(const char* tzName)
+{
+    strncpy(m_timezone, tzName, sizeof(m_timezone) - 1);
+    m_timezone[sizeof(m_timezone) - 1] = '\0';
+}
+
 void DateTimeWidget::UpdateTime()
 {
-    unsigned unixTime = m_pTimer->GetTime() + m_timezoneOffset;
+    unsigned utcTime = m_pTimer->GetTime();
+    int offset = m_timezone[0] ? GetTimezoneOffset(m_timezone, utcTime) : m_timezoneOffset;
+    unsigned unixTime = (unsigned)((int)utcTime + offset);
 
     // Calculate time components from Unix timestamp
     unsigned secondsInDay = unixTime % 86400;
@@ -121,7 +130,9 @@ void DateTimeWidget::UpdateTime()
 
 void DateTimeWidget::UpdateDate()
 {
-    unsigned unixTime = m_pTimer->GetTime() + m_timezoneOffset;
+    unsigned utcTime = m_pTimer->GetTime();
+    int offset = m_timezone[0] ? GetTimezoneOffset(m_timezone, utcTime) : m_timezoneOffset;
+    unsigned unixTime = (unsigned)((int)utcTime + offset);
 
     // Calculate date from Unix timestamp (days since 1970-01-01)
     unsigned days = unixTime / 86400;

@@ -53,16 +53,15 @@ bool WeatherService::FetchWeather(float latitude, float longitude, WeatherData* 
 
     CLogger::Get()->Write(FromWeather, LogDebug, "Fetching weather from %s%s", WEATHER_HOST, (const char*)path);
 
-    // Use static to avoid 512KB stack allocation
-    static HttpResponse response;
-    if (!m_pHttpClient->Get(WEATHER_HOST, (const char*)path, true, &response)) {
+    HttpResponse* pResponse = HttpClient::GetSharedResponse();
+    if (!m_pHttpClient->Get(WEATHER_HOST, (const char*)path, true, pResponse)) {
         CLogger::Get()->Write(FromWeather, LogError, "Failed to fetch weather data");
         return false;
     }
 
-    CLogger::Get()->Write(FromWeather, LogDebug, "Got response: %u bytes", response.bodyLength);
+    CLogger::Get()->Write(FromWeather, LogDebug, "Got response: %u bytes", pResponse->bodyLength);
 
-    bool success = ParseCurrentWeather(response.body, outData);
+    bool success = ParseCurrentWeather(pResponse->body, outData);
 
     // Populate location name from service config
     if (success) {
@@ -90,14 +89,13 @@ bool WeatherService::FetchForecast(float latitude, float longitude, ForecastDay*
 
     CLogger::Get()->Write(FromWeather, LogDebug, "Fetching forecast from %s%s", WEATHER_HOST, (const char*)path);
 
-    // Use static to avoid 512KB stack allocation
-    static HttpResponse response;
-    if (!m_pHttpClient->Get(WEATHER_HOST, (const char*)path, true, &response)) {
+    HttpResponse* pResponse = HttpClient::GetSharedResponse();
+    if (!m_pHttpClient->Get(WEATHER_HOST, (const char*)path, true, pResponse)) {
         CLogger::Get()->Write(FromWeather, LogError, "Failed to fetch forecast data");
         return false;
     }
 
-    return ParseForecast(response.body, outForecast, outCount);
+    return ParseForecast(pResponse->body, outForecast, outCount);
 }
 
 bool WeatherService::ParseCurrentWeather(const char* json, WeatherData* outData)

@@ -44,20 +44,19 @@ int CalendarService::FetchCalendar(const CalendarConfig& calConfig,
 {
     CLogger::Get()->Write(FromCalSvc, LogNotice, "Fetching calendar: %s", calConfig.name);
 
-    // Use static to avoid large stack allocation
-    static HttpResponse response;
-    if (!m_pHttpClient->Get(calConfig.url, &response)) {
+    HttpResponse* pResponse = HttpClient::GetSharedResponse();
+    if (!m_pHttpClient->Get(calConfig.url, pResponse)) {
         CLogger::Get()->Write(FromCalSvc, LogWarning, "Failed to fetch calendar: %s", calConfig.name);
         return currentCount;
     }
 
-    if (!response.success || response.statusCode != 200) {
-        CLogger::Get()->Write(FromCalSvc, LogWarning, "Calendar fetch failed: HTTP %d", response.statusCode);
+    if (!pResponse->success || pResponse->statusCode != 200) {
+        CLogger::Get()->Write(FromCalSvc, LogWarning, "Calendar fetch failed: HTTP %d", pResponse->statusCode);
         return currentCount;
     }
 
     CLogger::Get()->Write(FromCalSvc, LogNotice, "Received %u bytes from %s",
-                          response.bodyLength, calConfig.name);
+                          pResponse->bodyLength, calConfig.name);
 
     // Set up streaming parser
     ICSStreamParser parser;
@@ -77,12 +76,12 @@ int CalendarService::FetchCalendar(const CalendarConfig& calConfig,
     const unsigned CHUNK_SIZE = 8192;
     unsigned offset = 0;
 
-    while (offset < response.bodyLength) {
-        unsigned chunkLen = response.bodyLength - offset;
+    while (offset < pResponse->bodyLength) {
+        unsigned chunkLen = pResponse->bodyLength - offset;
         if (chunkLen > CHUNK_SIZE) {
             chunkLen = CHUNK_SIZE;
         }
-        parser.FeedData(response.body + offset, chunkLen);
+        parser.FeedData(pResponse->body + offset, chunkLen);
         offset += chunkLen;
     }
 

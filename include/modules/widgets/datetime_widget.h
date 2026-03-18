@@ -2,6 +2,7 @@
 #define DATETIME_WIDGET_H
 
 #include "modules/widgets/widget_base.h"
+#include "config/config.h"
 
 namespace mm {
 
@@ -14,7 +15,10 @@ public:
     bool Initialize() override;
     void Update() override;
 
-    // Set timezone offset in seconds from UTC
+    // Set timezone by name (uses DST-aware offset calculation)
+    void SetTimezone(const char* tzName);
+
+    // Set timezone offset in seconds from UTC (static, no DST)
     void SetTimezoneOffset(int offsetSeconds) { m_timezoneOffset = offsetSeconds; }
 
 private:
@@ -29,6 +33,7 @@ private:
     lv_obj_t*   m_pAmPmLabel;
 
     // State
+    char        m_timezone[64];
     int         m_timezoneOffset;
     unsigned    m_lastUpdateTime;
 

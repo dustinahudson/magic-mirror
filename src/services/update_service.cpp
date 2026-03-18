@@ -75,17 +75,17 @@ bool UpdateService::CheckAndUpdate()
 bool UpdateService::FetchLatestRelease(char* outTag, size_t tagLen,
                                        char* outAssetUrl, size_t urlLen)
 {
-    static HttpResponse response;  // 512KB — keep off stack
+    HttpResponse* pResponse = HttpClient::GetSharedResponse();
     char url[256];
     snprintf(url, sizeof(url), "https://%s%s", GITHUB_API_HOST, RELEASES_PATH);
-    if (!m_pHttpClient->GetRaw(url, &response)) {
+    if (!m_pHttpClient->GetRaw(url, pResponse)) {
         CLogger::Get()->Write(FromUpdate, LogError, "GitHub API request failed");
         return false;
     }
 
     // Parse tag_name from JSON response
     // Looking for: "tag_name": "v1.0.0"
-    const char* tagKey = strstr(response.body, "\"tag_name\"");
+    const char* tagKey = strstr(pResponse->body, "\"tag_name\"");
     if (!tagKey) {
         CLogger::Get()->Write(FromUpdate, LogError, "No tag_name in response");
         return false;
@@ -105,7 +105,7 @@ bool UpdateService::FetchLatestRelease(char* outTag, size_t tagLen,
 
     // Parse first asset's API url (within "assets" array)
     // The API url goes via api.github.com which redirects to CDN with Accept: application/octet-stream
-    const char* assetsKey = strstr(response.body, "\"assets\"");
+    const char* assetsKey = strstr(pResponse->body, "\"assets\"");
     if (!assetsKey) {
         CLogger::Get()->Write(FromUpdate, LogError, "No assets in response");
         return false;

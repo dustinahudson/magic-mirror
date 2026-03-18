@@ -5,6 +5,7 @@
 #include <circle/net/socket.h>
 #include <circle/string.h>
 #include <circle/types.h>
+#include <circle/bcmwatchdog.h>
 #include <circle-mbedtls/tlssimplesupport.h>
 #include <circle-mbedtls/tlssimpleclientsocket.h>
 
@@ -21,33 +22,57 @@ struct HttpResponse {
 class HttpClient
 {
 public:
+    // Timeout constants
+    static const unsigned HTTP_TIMEOUT_MS = 12000;      // API calls, calendar fetches
+    static const unsigned DOWNLOAD_TIMEOUT_MS = 120000; // OTA firmware downloads
+
     HttpClient(CNetSubSystem* pNet, CircleMbedTLS::CTLSSimpleSupport* pTLS);
     ~HttpClient();
 
-    // Fetch a URL (supports both HTTP and HTTPS)
+    // Check if network (WiFi + DHCP) is available
+    bool IsNetworkAvailable();
+
+    // Set watchdog for petting during long downloads
+    static void SetWatchdog(CBcmWatchdog* pWatchdog);
+
+    // Fetch a URL (delegates to GetRaw)
     bool Get(const char* url, HttpResponse* response);
 
-    // Fetch with explicit host/path (for when you've already parsed the URL)
+    // Fetch with explicit host/path (delegates to GetRaw)
     bool Get(const char* host, const char* path, bool useSSL, HttpResponse* response);
 
     // Download a file from URL to SD card path, following redirects
-    bool DownloadFile(const char* url, const char* sdPath);
+    bool DownloadFile(const char* url, const char* sdPath,
+                      unsigned timeoutMs = DOWNLOAD_TIMEOUT_MS);
 
-    // Raw-socket GET with redirect handling (avoids Circle's CHTTPClient)
-    bool GetRaw(const char* url, HttpResponse* response);
+    // Raw-socket GET with redirect handling and timeout
+    bool GetRaw(const char* url, HttpResponse* response,
+                unsigned timeoutMs = HTTP_TIMEOUT_MS);
+
+    // Shared response buffer - single 512KB buffer for all services (single-threaded)
+    static HttpResponse* GetSharedResponse();
 
 private:
     bool ParseUrl(const char* url, char* host, size_t hostLen,
                   char* path, size_t pathLen, bool* useSSL);
 
-    // Internal download helper with redirect depth tracking
-    bool DownloadFileInternal(const char* url, const char* sdPath, int redirectsLeft);
+    // Internal helpers with redirect depth and deadline tracking
+    bool DownloadFileInternal(const char* url, const char* sdPath,
+                              int redirectsLeft, unsigned deadlineTicks);
+    bool GetRawInternal(const char* url, HttpResponse* response,
+                        int redirectsLeft, unsigned deadlineTicks);
 
-    // Internal raw GET helper with redirect depth tracking
-    bool GetRawInternal(const char* url, HttpResponse* response, int redirectsLeft);
+    // Deadline infrastructure
+    static unsigned ComputeDeadline(unsigned timeoutMs);
+    static bool IsDeadlineExpired(unsigned deadlineTicks);
+
+    // Non-blocking receive for plain TCP sockets
+    static int ReceiveWithTimeout(CSocket& socket, void* buf, unsigned size,
+                                  unsigned deadlineTicks);
 
     CNetSubSystem* m_pNet;
     CircleMbedTLS::CTLSSimpleSupport* m_pTLS;
+    static CBcmWatchdog* s_pWatchdog;
 };
 
 } // namespace mm

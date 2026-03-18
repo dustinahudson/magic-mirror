@@ -13,6 +13,7 @@
 #include <circle/sched/scheduler.h>
 #include <circle/net/netsubsystem.h>
 #include <circle/usb/usbhcidevice.h>
+#include <circle/bcmwatchdog.h>
 #include <circle/types.h>
 
 // LVGL for display management
@@ -80,8 +81,11 @@ private:
     CWPASupplicant      m_WPASupplicant;
     CircleMbedTLS::CTLSSimpleSupport* m_pTLS;
 
+    CBcmWatchdog m_Watchdog;
+
     bool m_bNetworkReady;
     bool m_bRebootRequested;
+    bool m_bWifiDownLastRefresh;
     mm::FileLogger m_FileLogger;
 };
 
