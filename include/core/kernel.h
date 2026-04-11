@@ -85,7 +85,6 @@ private:
 
     bool m_bNetworkReady;
     bool m_bRebootRequested;
-    bool m_bWifiDownLastRefresh;
     mm::FileLogger m_FileLogger;
 };
 

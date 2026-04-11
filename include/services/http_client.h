@@ -29,9 +29,6 @@ public:
     HttpClient(CNetSubSystem* pNet, CircleMbedTLS::CTLSSimpleSupport* pTLS);
     ~HttpClient();
 
-    // Check if network (WiFi + DHCP) is available
-    bool IsNetworkAvailable();
-
     // Set watchdog for petting during long downloads
     static void SetWatchdog(CBcmWatchdog* pWatchdog);
 

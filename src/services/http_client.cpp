@@ -67,11 +67,6 @@ HttpClient::~HttpClient()
 {
 }
 
-bool HttpClient::IsNetworkAvailable()
-{
-    return m_pNet && m_pNet->IsRunning();
-}
-
 void HttpClient::SetWatchdog(CBcmWatchdog* pWatchdog)
 {
     s_pWatchdog = pWatchdog;
@@ -164,11 +159,6 @@ bool HttpClient::DownloadFileInternal(const char* url, const char* sdPath,
 {
     if (redirectsLeft <= 0) {
         CLogger::Get()->Write(FromHttpClient, LogError, "DownloadFile: too many redirects");
-        return false;
-    }
-
-    if (!IsNetworkAvailable()) {
-        CLogger::Get()->Write(FromHttpClient, LogWarning, "DownloadFile: network unavailable, skipping");
         return false;
     }
 
@@ -468,11 +458,6 @@ bool HttpClient::GetRawInternal(const char* url, HttpResponse* response,
 {
     if (redirectsLeft <= 0) {
         CLogger::Get()->Write(FromHttpClient, LogError, "GetRaw: too many redirects");
-        return false;
-    }
-
-    if (!IsNetworkAvailable()) {
-        CLogger::Get()->Write(FromHttpClient, LogWarning, "GetRaw: network unavailable, skipping");
         return false;
     }
 
