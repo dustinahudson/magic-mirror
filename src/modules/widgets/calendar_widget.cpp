@@ -463,7 +463,7 @@ void CalendarWidget::RenderDayEvents(lv_obj_t* cell, int row, int col,
             CString eventText;
             eventText.Format("%s %s", timeStr, event.title);
 
-            lv_label_set_long_mode(slot.label, LV_LABEL_LONG_WRAP);
+            lv_label_set_long_mode(slot.label, LV_LABEL_LONG_DOT);
             lv_obj_set_style_max_height(slot.label, 40, LV_PART_MAIN);
             lv_label_set_text(slot.label, (const char*)eventText);
         }

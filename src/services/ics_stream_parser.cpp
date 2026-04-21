@@ -8,6 +8,104 @@ namespace mm {
 
 static const char FromICS[] = "ics";
 
+// Normalize UTF-8 text for the ASCII-only display font (LVGL Montserrat).
+// Rewrites common Unicode punctuation/spaces to ASCII equivalents and strips
+// zero-width characters, in place on a null-terminated string. Safe in place
+// because every substitution is shorter than or equal to the matched bytes.
+//
+//   Apostrophes / single quotes              -> '
+//     U+2018 U+2019 U+201B U+2032 U+02BC U+02B9 U+00B4 U+2039 U+203A U+FF07
+//   Double quotes                            -> "
+//     U+201C U+201D U+201E U+201F U+00AB U+00BB
+//   Dashes / hyphens / minus                 -> -
+//     U+2010 U+2011 U+2013 U+2014 U+2212
+//   Ellipsis U+2026                          -> ...
+//   Spaces U+00A0 U+2007 U+2009 U+202F       -> ' '
+//   Bullet U+2022, middle dot U+00B7         -> *
+//   Zero-width U+200B U+200C U+200D U+2060,
+//   BOM/ZWNBSP U+FEFF                        -> (stripped)
+static void NormalizeDisplayTextUtf8(char* str)
+{
+    if (!str) return;
+    char* src = str;
+    char* dst = str;
+    while (*src) {
+        unsigned char c0 = (unsigned char)src[0];
+        unsigned char c1 = (unsigned char)src[1];
+
+        if (c1 != 0) {
+            // --- 2-byte UTF-8 ---
+            if (c0 == 0xCA && (c1 == 0xBC || c1 == 0xB9)) {
+                // U+02BC ʼ, U+02B9 ʹ
+                *dst++ = '\''; src += 2; continue;
+            }
+            if (c0 == 0xC2) {
+                switch (c1) {
+                    case 0xB4: *dst++ = '\''; src += 2; continue;  // U+00B4 ´
+                    case 0xAB: *dst++ = '"';  src += 2; continue;  // U+00AB «
+                    case 0xBB: *dst++ = '"';  src += 2; continue;  // U+00BB »
+                    case 0xA0: *dst++ = ' ';  src += 2; continue;  // U+00A0 NBSP
+                    case 0xB7: *dst++ = '*';  src += 2; continue;  // U+00B7 ·
+                }
+            }
+
+            // --- 3-byte UTF-8 ---
+            // src[2] is safe to read: c1 != 0 means at worst src[2] is the
+            // string's '\0', which is still inside the buffer.
+            unsigned char c2 = (unsigned char)src[2];
+
+            // E2 80 xx -- General Punctuation block
+            if (c0 == 0xE2 && c1 == 0x80) {
+                switch (c2) {
+                    // Apostrophes / single quotes -> '
+                    case 0x98: case 0x99: case 0x9B: case 0xB2:
+                    // Single angle quotes U+2039 ‹, U+203A ›
+                    case 0xB9: case 0xBA:
+                        *dst++ = '\''; src += 3; continue;
+                    // Double quotes U+201C..U+201F -> "
+                    case 0x9C: case 0x9D: case 0x9E: case 0x9F:
+                        *dst++ = '"'; src += 3; continue;
+                    // Hyphens/dashes U+2010 U+2011 U+2013 U+2014 -> -
+                    case 0x90: case 0x91: case 0x93: case 0x94:
+                        *dst++ = '-'; src += 3; continue;
+                    // Ellipsis U+2026 -> ...
+                    case 0xA6:
+                        *dst++ = '.'; *dst++ = '.'; *dst++ = '.';
+                        src += 3; continue;
+                    // Spaces U+2007 figure, U+2009 thin, U+202F NNBSP
+                    case 0x87: case 0x89: case 0xAF:
+                        *dst++ = ' '; src += 3; continue;
+                    // Bullet U+2022
+                    case 0xA2:
+                        *dst++ = '*'; src += 3; continue;
+                    // Zero-width: U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ -> strip
+                    case 0x8B: case 0x8C: case 0x8D:
+                        src += 3; continue;
+                }
+            }
+            // U+2060 word joiner (E2 81 A0) -> strip
+            if (c0 == 0xE2 && c1 == 0x81 && c2 == 0xA0) {
+                src += 3; continue;
+            }
+            // U+2212 minus sign (E2 88 92) -> -
+            if (c0 == 0xE2 && c1 == 0x88 && c2 == 0x92) {
+                *dst++ = '-'; src += 3; continue;
+            }
+            // U+FEFF BOM / ZWNBSP (EF BB BF) -> strip
+            if (c0 == 0xEF && c1 == 0xBB && c2 == 0xBF) {
+                src += 3; continue;
+            }
+            // U+FF07 fullwidth apostrophe (EF BC 87) -> '
+            if (c0 == 0xEF && c1 == 0xBC && c2 == 0x87) {
+                *dst++ = '\''; src += 3; continue;
+            }
+        }
+
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+}
+
 // Structure to hold parsed RRULE with full support
 struct RRule {
     enum Freq { NONE, DAILY, WEEKLY, MONTHLY, YEARLY } freq;
@@ -848,6 +946,7 @@ bool ICSStreamParser::ParseEvent(const char* eventStart, const char* eventEnd,
     if (!FindProperty(eventStart, eventEnd, "SUMMARY", outEvent->title, sizeof(outEvent->title))) {
         return false;  // Skip events without a title
     }
+    NormalizeDisplayTextUtf8(outEvent->title);
 
     // Get DTSTART
     char dtstart[64] = {0};

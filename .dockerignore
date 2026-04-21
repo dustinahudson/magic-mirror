@@ -1,0 +1,14 @@
+# The image is used with the source tree bind-mounted, but these are excluded
+# in case the context is ever sent to the daemon (e.g. `docker build .`).
+lib/
+deps/
+*.o
+*.d
+*.img
+*.elf
+*.hex
+*.map
+*.lst
+config/config.json
+wpa_supplicant.conf
+.git/

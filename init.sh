@@ -45,11 +45,15 @@ setup_circle_stdlib() {
     if [ ! -f "$LIB_DIR/circle-stdlib/configure" ]; then
         echo "Adding circle-stdlib submodule..."
         # Use submodule update if already registered, otherwise add fresh
-        if git -C "$SCRIPT_DIR" config --get "submodule.lib/circle-stdlib.url" > /dev/null 2>&1; then
+        if git -C "$SCRIPT_DIR" config --get "submodule.lib/circle-stdlib.url" > /dev/null 2>&1 \
+           && git -C "$SCRIPT_DIR" ls-files --stage lib/circle-stdlib | grep -q '^160000'; then
             echo "Submodule already registered, initializing..."
             git -C "$SCRIPT_DIR" submodule update --init lib/circle-stdlib
         else
-            git -C "$SCRIPT_DIR" submodule add "$CIRCLE_STDLIB_URL" lib/circle-stdlib
+            # -f bypasses .gitignore (lib/circle-stdlib/ is ignored so the
+            # dep tree isn't committed by accident). Without -f, git refuses
+            # to register the gitlink.
+            git -C "$SCRIPT_DIR" submodule add -f "$CIRCLE_STDLIB_URL" lib/circle-stdlib
             git -C "$SCRIPT_DIR" submodule update --init lib/circle-stdlib
         fi
     else

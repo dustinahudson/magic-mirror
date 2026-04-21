@@ -229,17 +229,18 @@ void WeatherWidget::CreateUI()
         // Day name (left side)
         m_pForecastDays[i] = lv_label_create(dayRow);
         lv_obj_set_style_text_color(m_pForecastDays[i], lv_color_make(150, 150, 150), LV_PART_MAIN);
-        lv_obj_set_style_text_font(m_pForecastDays[i], &lv_font_montserrat_18, LV_PART_MAIN);
-        lv_obj_set_width(m_pForecastDays[i], 100);  // Fixed width for alignment
+        lv_obj_set_style_text_font(m_pForecastDays[i], &lv_font_montserrat_22, LV_PART_MAIN);
+        lv_obj_set_width(m_pForecastDays[i], 120);  // Fixed width fits "Tomorrow" at 22pt
 
-        // Weather icon (center)
+        // Weather icon (center) - 56px source scaled to 42px (3/4)
         m_pForecastIcons[i] = lv_image_create(dayRow);
-        lv_image_set_src(m_pForecastIcons[i], &weather_icon_clear_day_small);
+        lv_image_set_src(m_pForecastIcons[i], &weather_icon_clear_day);
+        lv_image_set_scale(m_pForecastIcons[i], 192);
 
         // Temps (right side) - high/low
         m_pForecastTemps[i] = lv_label_create(dayRow);
         lv_obj_set_style_text_color(m_pForecastTemps[i], lv_color_make(180, 180, 180), LV_PART_MAIN);
-        lv_obj_set_style_text_font(m_pForecastTemps[i], &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_font(m_pForecastTemps[i], &lv_font_montserrat_22, LV_PART_MAIN);
     }
 }
 
@@ -314,8 +315,8 @@ void WeatherWidget::UpdateDisplay()
             const char* dayName = GetDayName(i);
             lv_label_set_text(m_pForecastDays[i], dayName);
 
-            // Forecast icon (small, always show day icons for forecast)
-            const lv_image_dsc_t* forecastIcon = get_weather_icon(m_forecast[i].weatherCode, true, true);
+            // Forecast icon (always show day icons for forecast)
+            const lv_image_dsc_t* forecastIcon = get_weather_icon(m_forecast[i].weatherCode, true, false);
             if (forecastIcon) {
                 lv_image_set_src(m_pForecastIcons[i], forecastIcon);
             }
