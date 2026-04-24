@@ -47,6 +47,10 @@ read -r -p "continue? [y/N] " yn
 
 sed -i "s|APP_VERSION='\"${CURRENT}\"'|APP_VERSION='\"${NEW}\"'|" Makefile
 
+# Force kernel.cpp to rebuild so the new APP_VERSION macro gets baked in —
+# make tracks source mtimes, not Makefile changes.
+touch src/core/kernel.cpp
+
 echo "==> building"
 ./scripts/docker-build.sh make
 
