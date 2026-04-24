@@ -201,6 +201,7 @@ bool WeatherService::ParseCurrentWeather(const char* json, WeatherData* outData)
                         if (sscanf(timeStr, "%d:%d", &hour, &minute) == 2) {
                             // Bound check for compiler warning
                             if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                                outData->sunriseMinutes = hour * 60 + minute;
                                 const char* ampm = (hour >= 12) ? "pm" : "am";
                                 if (hour > 12) hour -= 12;
                                 if (hour == 0) hour = 12;
@@ -228,6 +229,7 @@ bool WeatherService::ParseCurrentWeather(const char* json, WeatherData* outData)
                         if (sscanf(timeStr, "%d:%d", &hour, &minute) == 2) {
                             // Bound check for compiler warning
                             if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                                outData->sunsetMinutes = hour * 60 + minute;
                                 const char* ampm = (hour >= 12) ? "pm" : "am";
                                 if (hour > 12) hour -= 12;
                                 if (hour == 0) hour = 12;

@@ -142,6 +142,7 @@ void WeatherWidget::CreateUI()
     lv_obj_set_style_bg_opa(windSunRow, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(windSunRow, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(windSunRow, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(windSunRow, 12, LV_PART_MAIN);
     lv_obj_set_size(windSunRow, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(windSunRow, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(windSunRow, 6, LV_PART_MAIN);
@@ -313,9 +314,17 @@ void WeatherWidget::UpdateDisplay()
         lv_image_set_src(m_pMoonIcon, moonIcon);
     }
 
-    // Weather icon - use image based on weather code
-    // TODO: Determine day/night based on current time vs sunrise/sunset
-    bool isDay = true;  // For now, assume daytime
+    // Weather icon - use image based on weather code and current time vs sunrise/sunset
+    bool isDay = true;
+    if (m_pTimer && m_weatherData.sunriseMinutes > 0 && m_weatherData.sunsetMinutes > 0) {
+        unsigned utcTime = m_pTimer->GetTime();
+        int offset = GetTimezoneOffset(m_timezone, utcTime);
+        int localTime = (int)utcTime + offset;
+        if (localTime < 0) localTime = 0;
+        int nowMinutes = (localTime % 86400) / 60;
+        isDay = (nowMinutes >= m_weatherData.sunriseMinutes &&
+                 nowMinutes <  m_weatherData.sunsetMinutes);
+    }
     const lv_image_dsc_t* weatherIcon = get_weather_icon(m_weatherData.weatherCode, isDay, false);
     if (weatherIcon) {
         lv_image_set_src(m_pWeatherIcon, weatherIcon);

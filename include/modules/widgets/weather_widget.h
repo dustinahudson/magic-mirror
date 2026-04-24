@@ -17,6 +17,8 @@ struct WeatherData {
     char state[16];         // State/region code (e.g., "US-MO")
     char sunriseTime[16];   // Sunrise time "6:45am"
     char sunsetTime[16];    // Sunset time "5:11pm"
+    int sunriseMinutes;     // Minutes since local midnight (for day/night check)
+    int sunsetMinutes;      // Minutes since local midnight
     int weatherCode;        // WMO weather code for icon selection
     int moonPhase;          // 0..7: new, waxing crescent, first qtr, waxing gibbous, full, waning gibbous, last qtr, waning crescent
     bool isMetric;          // true = Celsius, false = Fahrenheit
