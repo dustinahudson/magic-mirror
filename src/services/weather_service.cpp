@@ -4,11 +4,32 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 
 static const char FromWeather[] = "weather";
 
 // Open-Meteo API base URL
 static const char* WEATHER_HOST = "api.open-meteo.com";
+
+// Moon phase: 0..7 mapped to new, waxing crescent, first quarter,
+// waxing gibbous, full, waning gibbous, last quarter, waning crescent.
+// Accurate to within a day using the synodic month and a known new-moon epoch.
+static int ComputeMoonPhase(int year, int month, int day)
+{
+    int y = year;
+    int m = month;
+    if (m < 3) { y--; m += 12; }
+    int a = y / 100;
+    int b = 2 - a + a / 4;
+    long jd = (long)(365.25 * (y + 4716))
+            + (long)(30.6001 * (m + 1))
+            + day + b - 1524;
+    // JD 2451549.5 = 2000-01-06 UTC, a known new moon
+    double days = fmod((double)jd - 2451549.5, 29.530588853);
+    if (days < 0) days += 29.530588853;
+    int phase = (int)((days / 29.530588853) * 8.0 + 0.5) & 7;
+    return phase;
+}
 
 namespace mm {
 
@@ -167,6 +188,11 @@ bool WeatherService::ParseCurrentWeather(const char* json, WeatherData* outData)
                 const char* valueStart = strchr(arrayStart, '"');
                 if (valueStart) {
                     valueStart++; // Skip opening quote
+                    // Parse date portion (YYYY-MM-DD) for moon phase
+                    int year = 0, mon = 0, mday = 0;
+                    if (sscanf(valueStart, "%d-%d-%d", &year, &mon, &mday) == 3) {
+                        outData->moonPhase = ComputeMoonPhase(year, mon, mday);
+                    }
                     // Find the 'T' separator in the ISO datetime
                     const char* timeStr = strchr(valueStart, 'T');
                     if (timeStr) {

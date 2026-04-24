@@ -18,6 +18,7 @@ struct WeatherData {
     char sunriseTime[16];   // Sunrise time "6:45am"
     char sunsetTime[16];    // Sunset time "5:11pm"
     int weatherCode;        // WMO weather code for icon selection
+    int moonPhase;          // 0..7: new, waxing crescent, first qtr, waxing gibbous, full, waning gibbous, last qtr, waning crescent
     bool isMetric;          // true = Celsius, false = Fahrenheit
 };
 
@@ -60,7 +61,9 @@ private:
     lv_obj_t*   m_pLocationLabel;     // City, State
     lv_obj_t*   m_pWindIcon;          // Wind level icon
     lv_obj_t*   m_pWindLabel;         // Wind speed + direction
-    lv_obj_t*   m_pSunsetIcon;        // Sunset icon
+    lv_obj_t*   m_pSunriseIcon;       // Sunrise icon
+    lv_obj_t*   m_pSunriseLabel;      // Sunrise time
+    lv_obj_t*   m_pMoonIcon;          // Moon phase icon
     lv_obj_t*   m_pSunsetLabel;       // Sunset time
     lv_obj_t*   m_pWeatherIcon;       // Weather condition icon
     lv_obj_t*   m_pTempLabel;         // Main temperature

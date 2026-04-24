@@ -1,331 +1,221 @@
 #!/usr/bin/env python3
-"""
-Convert PNG weather icons to LVGL v9 C arrays for bare-metal use.
-"""
+"""Convert PNG icons in ./icons/ to LVGL RGB565 C arrays.
 
-import sys
+Surgically updates src/ui/icons/weather_icons.{cpp,h}:
+  - Weather icons (10): replaces existing data blocks at 56x56 (large) and 28x28 (small).
+  - Moon phase icons (8): inserts/replaces data blocks at 32x32.
+  - Sunset + wind icons in the existing cpp are left untouched (no source PNGs).
+
+Each PNG is cropped to its content bbox, then scaled to fit the target square
+preserving aspect ratio, centered on a transparent canvas.
+"""
+import re
 from pathlib import Path
+from PIL import Image
 
-try:
-    from PIL import Image
-except ImportError:
-    print("Please install Pillow: pip install Pillow")
-    sys.exit(1)
+REPO = Path(__file__).resolve().parent.parent
+ICONS_DIR = REPO / "icons"
+CPP_PATH = REPO / "src/ui/icons/weather_icons.cpp"
+H_PATH = REPO / "src/ui/icons/weather_icons.h"
 
-ICON_SIZE_LARGE = 56
-ICON_SIZE_SMALL = 28
-ICON_SIZE_INFO = 32  # For wind/sun info line icons
-ICONS_DIR = Path(__file__).parent.parent / "assets/icons/weather-icons/production/fill/png"
-OUTPUT_DIR = Path(__file__).parent.parent / "src/ui/icons"
+WEATHER_ICONS = [
+    "clear_day",
+    "clear_night",
+    "partly_cloudy_day",
+    "partly_cloudy_night",
+    "cloudy",
+    "fog",
+    "drizzle",
+    "rain",
+    "snow",
+    "thunderstorm",
+]
 
-WEATHER_ICONS = {
-    "clear_day": "clear-day.png",
-    "clear_night": "clear-night.png",
-    "partly_cloudy_day": "partly-cloudy-day.png",
-    "partly_cloudy_night": "partly-cloudy-night.png",
-    "cloudy": "cloudy.png",
-    "fog": "fog.png",
-    "drizzle": "drizzle.png",
-    "rain": "rain.png",
-    "snow": "snow.png",
-    "thunderstorm": "thunderstorms.png",
-}
+# Moon phases in standard index order (matches get_moon_icon switch).
+MOON_PHASES = [
+    "new",
+    "waxing_crescent",
+    "first_quarter",
+    "waxing_gibbous",
+    "full",
+    "waning_gibbous",
+    "last_quarter",
+    "waning_crescent",
+]
 
-# Additional icons (only tiny size needed)
-INFO_ICONS = {
-    "sunset": "sunset.png",
-}
+WEATHER_LARGE = 56
+WEATHER_SMALL = 28
+MOON_SIZE = 32
 
-# Wind Beaufort scale icons (0-12)
-WIND_ICONS = {f"wind_{i}": f"wind-beaufort-{i}.png" for i in range(13)}
 
 def rgb_to_rgb565(r, g, b):
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
 
-def convert_png_to_lvgl(png_path, size):
-    """Convert PNG to LVGL RGB565 format (no alpha for simplicity)."""
-    img = Image.open(png_path)
-    img = img.resize((size, size), Image.Resampling.LANCZOS)
-    
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
-    
-    pixels = list(img.getdata())
-    width, height = img.size
-    
-    # Use RGB565 format (2 bytes per pixel, little endian)
-    c_array = []
-    for pixel in pixels:
-        r, g, b, a = pixel
-        # Pre-multiply alpha and blend with black background for transparency
+
+def convert(png_path, size):
+    """Load PNG, crop to content, scale to fit size x size (aspect-preserving),
+    center on transparent canvas, and return RGB565 little-endian byte list."""
+    img = Image.open(png_path).convert("RGBA")
+    bbox = img.getbbox()
+    if bbox:
+        img = img.crop(bbox)
+    scale = size / max(img.size)
+    new_size = (max(1, round(img.size[0] * scale)), max(1, round(img.size[1] * scale)))
+    img = img.resize(new_size, Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.paste(img, ((size - new_size[0]) // 2, (size - new_size[1]) // 2), img)
+
+    out = []
+    for r, g, b, a in canvas.getdata():
         if a < 255:
             r = (r * a) // 255
             g = (g * a) // 255
             b = (b * a) // 255
-        rgb565 = rgb_to_rgb565(r, g, b)
-        c_array.append(f"0x{rgb565 & 0xff:02x}")
-        c_array.append(f"0x{(rgb565 >> 8) & 0xff:02x}")
-    
-    stride = width * 2  # RGB565 = 2 bytes per pixel
-    return width, height, stride, c_array
+        v = rgb_to_rgb565(r, g, b)
+        out.append(f"0x{v & 0xff:02x}")
+        out.append(f"0x{(v >> 8) & 0xff:02x}")
+    return out
+
+
+def make_block(var, size, pixels, trailing_newlines=1):
+    """Produce `static uint8_t <var>_data[] = {...};` followed by the descriptor."""
+    lines = [f"static const uint8_t {var}_data[] = {{"]
+    for i in range(0, len(pixels), 32):
+        lines.append("    " + ", ".join(pixels[i : i + 32]) + ",")
+    lines.append("};")
+    lines.append("")
+    lines.append(f"const lv_image_dsc_t {var} = {{")
+    lines.append("    .header = {")
+    lines.append("        .magic = LV_IMAGE_HEADER_MAGIC,")
+    lines.append("        .cf = LV_COLOR_FORMAT_RGB565,")
+    lines.append("        .flags = 0,")
+    lines.append(f"        .w = {size},")
+    lines.append(f"        .h = {size},")
+    lines.append(f"        .stride = {size * 2},")
+    lines.append("        .reserved_2 = 0,")
+    lines.append("    },")
+    lines.append(f"    .data_size = sizeof({var}_data),")
+    lines.append(f"    .data = {var}_data,")
+    lines.append("};")
+    return "\n".join(lines) + "\n" * trailing_newlines
+
+
+def replace_block(src, var, new_block):
+    """Replace the [data array + descriptor] pair for `var` in cpp source."""
+    pattern = re.compile(
+        r"static const uint8_t " + re.escape(var) + r"_data\[\] = \{.*?"
+        r"const lv_image_dsc_t " + re.escape(var) + r" = \{.*?\n\};\n",
+        re.DOTALL,
+    )
+    new_src, n = pattern.subn(new_block, src)
+    if n != 1:
+        raise RuntimeError(f"Expected 1 match for {var}, got {n}")
+    return new_src
+
+
+def strip_block(src, var):
+    """Remove an existing [data + descriptor] block with trailing blank line, if present."""
+    pattern = re.compile(
+        r"static const uint8_t " + re.escape(var) + r"_data\[\] = \{.*?"
+        r"const lv_image_dsc_t " + re.escape(var) + r" = \{.*?\n\};\n\n?",
+        re.DOTALL,
+    )
+    return pattern.sub("", src)
+
+
+MOON_LOOKUP = """
+const lv_image_dsc_t* get_moon_icon(int phase)
+{
+    switch (phase) {
+        case 0: return &icon_moon_new;
+        case 1: return &icon_moon_waxing_crescent;
+        case 2: return &icon_moon_first_quarter;
+        case 3: return &icon_moon_waxing_gibbous;
+        case 4: return &icon_moon_full;
+        case 5: return &icon_moon_waning_gibbous;
+        case 6: return &icon_moon_last_quarter;
+        case 7: return &icon_moon_waning_crescent;
+        default: return &icon_moon_new;
+    }
+}
+"""
+
+
+def update_cpp():
+    src = CPP_PATH.read_text()
+
+    # --- Weather icons: replace in place (large + small) ---
+    for name in WEATHER_ICONS:
+        png = ICONS_DIR / f"{name}.png"
+        if not png.exists():
+            print(f"  SKIP (missing): {png.name}")
+            continue
+        print(f"  weather: {png.name}")
+        for suffix, size in (("", WEATHER_LARGE), ("_small", WEATHER_SMALL)):
+            var = f"weather_icon_{name}{suffix}"
+            pixels = convert(png, size)
+            src = replace_block(src, var, make_block(var, size, pixels))
+
+    # --- Moon icons: strip any existing, then insert before get_weather_icon ---
+    moon_blocks = ""
+    for phase in MOON_PHASES:
+        png = ICONS_DIR / f"moon_{phase}.png"
+        if not png.exists():
+            print(f"  SKIP (missing): {png.name}")
+            continue
+        print(f"  moon: {png.name}")
+        var = f"icon_moon_{phase}"
+        src = strip_block(src, var)
+        pixels = convert(png, MOON_SIZE)
+        moon_blocks += make_block(var, MOON_SIZE, pixels, trailing_newlines=2)
+
+    # Remove any prior get_moon_icon lookup before re-inserting.
+    src = re.sub(
+        r"\nconst lv_image_dsc_t\* get_moon_icon\(int phase\)\s*\{.*?\n\}\n",
+        "",
+        src,
+        flags=re.DOTALL,
+    )
+
+    anchor = "const lv_image_dsc_t* get_weather_icon("
+    idx = src.index(anchor)
+    src = src[:idx] + moon_blocks + src[idx:]
+    src = src.rstrip() + "\n" + MOON_LOOKUP
+
+    CPP_PATH.write_text(src)
+    print(f"Wrote: {CPP_PATH}")
+
+
+def update_header():
+    h = H_PATH.read_text()
+
+    moon_externs = "\n".join(
+        f"extern const lv_image_dsc_t icon_moon_{p};" for p in MOON_PHASES
+    ) + "\n"
+
+    if "icon_moon_new" not in h:
+        wind_anchor = "extern const lv_image_dsc_t icon_wind_12;\n"
+        if wind_anchor not in h:
+            raise RuntimeError("Expected icon_wind_12 extern in header")
+        h = h.replace(wind_anchor, wind_anchor + moon_externs)
+
+        proto_anchor = "const lv_image_dsc_t* get_wind_icon(int wind_speed_mph);\n"
+        if "get_moon_icon" not in h:
+            h = h.replace(
+                proto_anchor,
+                proto_anchor + "const lv_image_dsc_t* get_moon_icon(int phase);\n",
+            )
+        H_PATH.write_text(h)
+        print(f"Wrote: {H_PATH}")
+    else:
+        print(f"{H_PATH.name} already has moon declarations")
+
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    
-    print("Converting weather icons to LVGL v9 format...")
-    
-    # Generate header
-    header = '''#ifndef WEATHER_ICONS_H
-#define WEATHER_ICONS_H
+    update_cpp()
+    update_header()
+    print("Done.")
 
-#include "lvgl.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-'''
-    for name in WEATHER_ICONS.keys():
-        header += f"extern const lv_image_dsc_t weather_icon_{name};\n"
-        header += f"extern const lv_image_dsc_t weather_icon_{name}_small;\n"
-
-    # Info icons (tiny size only)
-    for name in INFO_ICONS.keys():
-        header += f"extern const lv_image_dsc_t icon_{name};\n"
-
-    # Wind icons
-    for name in WIND_ICONS.keys():
-        header += f"extern const lv_image_dsc_t icon_{name};\n"
-
-    header += '''
-const lv_image_dsc_t* get_weather_icon(int wmo_code, bool is_day, bool small_size);
-const lv_image_dsc_t* get_wind_icon(int wind_speed_mph);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif
-'''
-    
-    with open(OUTPUT_DIR / "weather_icons.h", 'w') as f:
-        f.write(header)
-    print(f"Generated: weather_icons.h")
-    
-    # Generate source
-    source = '''#include "weather_icons.h"
-
-'''
-    
-    for name, filename in WEATHER_ICONS.items():
-        for src_size in [64, 128, 256]:
-            src_path = ICONS_DIR / str(src_size) / filename
-            if src_path.exists():
-                break
-        else:
-            print(f"Warning: Icon not found: {filename}")
-            continue
-        
-        print(f"  Converting: {filename}")
-        
-        # Large version
-        width, height, stride, pixels = convert_png_to_lvgl(src_path, ICON_SIZE_LARGE)
-        source += f"static const uint8_t weather_icon_{name}_data[] = {{\n"
-        for i in range(0, len(pixels), 32):
-            source += "    " + ", ".join(pixels[i:i+32]) + ",\n"
-        source += "};\n\n"
-        
-        source += f'''const lv_image_dsc_t weather_icon_{name} = {{
-    .header = {{
-        .magic = LV_IMAGE_HEADER_MAGIC,
-        .cf = LV_COLOR_FORMAT_RGB565,
-        .flags = 0,
-        .w = {width},
-        .h = {height},
-        .stride = {stride},
-        .reserved_2 = 0,
-    }},
-    .data_size = sizeof(weather_icon_{name}_data),
-    .data = weather_icon_{name}_data,
-}};
-
-'''
-        
-        # Small version
-        width, height, stride, pixels = convert_png_to_lvgl(src_path, ICON_SIZE_SMALL)
-        source += f"static const uint8_t weather_icon_{name}_small_data[] = {{\n"
-        for i in range(0, len(pixels), 32):
-            source += "    " + ", ".join(pixels[i:i+32]) + ",\n"
-        source += "};\n\n"
-        
-        source += f'''const lv_image_dsc_t weather_icon_{name}_small = {{
-    .header = {{
-        .magic = LV_IMAGE_HEADER_MAGIC,
-        .cf = LV_COLOR_FORMAT_RGB565,
-        .flags = 0,
-        .w = {width},
-        .h = {height},
-        .stride = {stride},
-        .reserved_2 = 0,
-    }},
-    .data_size = sizeof(weather_icon_{name}_small_data),
-    .data = weather_icon_{name}_small_data,
-}};
-
-'''
-    
-    # Generate info icons (tiny size)
-    for name, filename in INFO_ICONS.items():
-        for src_size in [64, 128, 256]:
-            src_path = ICONS_DIR / str(src_size) / filename
-            if src_path.exists():
-                break
-        else:
-            print(f"Warning: Icon not found: {filename}")
-            continue
-
-        print(f"  Converting: {filename} (tiny)")
-
-        width, height, stride, pixels = convert_png_to_lvgl(src_path, ICON_SIZE_INFO)
-        source += f"static const uint8_t icon_{name}_data[] = {{\n"
-        for i in range(0, len(pixels), 32):
-            source += "    " + ", ".join(pixels[i:i+32]) + ",\n"
-        source += "};\n\n"
-
-        source += f'''const lv_image_dsc_t icon_{name} = {{
-    .header = {{
-        .magic = LV_IMAGE_HEADER_MAGIC,
-        .cf = LV_COLOR_FORMAT_RGB565,
-        .flags = 0,
-        .w = {width},
-        .h = {height},
-        .stride = {stride},
-        .reserved_2 = 0,
-    }},
-    .data_size = sizeof(icon_{name}_data),
-    .data = icon_{name}_data,
-}};
-
-'''
-
-    # Generate wind icons (tiny size)
-    for name, filename in WIND_ICONS.items():
-        for src_size in [64, 128, 256]:
-            src_path = ICONS_DIR / str(src_size) / filename
-            if src_path.exists():
-                break
-        else:
-            print(f"Warning: Icon not found: {filename}")
-            continue
-
-        print(f"  Converting: {filename} (tiny)")
-
-        width, height, stride, pixels = convert_png_to_lvgl(src_path, ICON_SIZE_INFO)
-        source += f"static const uint8_t icon_{name}_data[] = {{\n"
-        for i in range(0, len(pixels), 32):
-            source += "    " + ", ".join(pixels[i:i+32]) + ",\n"
-        source += "};\n\n"
-
-        source += f'''const lv_image_dsc_t icon_{name} = {{
-    .header = {{
-        .magic = LV_IMAGE_HEADER_MAGIC,
-        .cf = LV_COLOR_FORMAT_RGB565,
-        .flags = 0,
-        .w = {width},
-        .h = {height},
-        .stride = {stride},
-        .reserved_2 = 0,
-    }},
-    .data_size = sizeof(icon_{name}_data),
-    .data = icon_{name}_data,
-}};
-
-'''
-
-    # Add lookup functions
-    source += '''
-const lv_image_dsc_t* get_weather_icon(int wmo_code, bool is_day, bool small_size)
-{
-    const lv_image_dsc_t* icon = NULL;
-    
-    if (wmo_code == 0) {
-        icon = is_day ? (small_size ? &weather_icon_clear_day_small : &weather_icon_clear_day)
-                      : (small_size ? &weather_icon_clear_night_small : &weather_icon_clear_night);
-    }
-    else if (wmo_code <= 3) {
-        icon = is_day ? (small_size ? &weather_icon_partly_cloudy_day_small : &weather_icon_partly_cloudy_day)
-                      : (small_size ? &weather_icon_partly_cloudy_night_small : &weather_icon_partly_cloudy_night);
-    }
-    else if (wmo_code <= 48) {
-        icon = small_size ? &weather_icon_fog_small : &weather_icon_fog;
-    }
-    else if (wmo_code <= 57) {
-        icon = small_size ? &weather_icon_drizzle_small : &weather_icon_drizzle;
-    }
-    else if (wmo_code <= 67) {
-        icon = small_size ? &weather_icon_rain_small : &weather_icon_rain;
-    }
-    else if (wmo_code <= 77) {
-        icon = small_size ? &weather_icon_snow_small : &weather_icon_snow;
-    }
-    else if (wmo_code <= 82) {
-        icon = small_size ? &weather_icon_rain_small : &weather_icon_rain;
-    }
-    else if (wmo_code <= 86) {
-        icon = small_size ? &weather_icon_snow_small : &weather_icon_snow;
-    }
-    else if (wmo_code >= 95) {
-        icon = small_size ? &weather_icon_thunderstorm_small : &weather_icon_thunderstorm;
-    }
-    else {
-        icon = small_size ? &weather_icon_cloudy_small : &weather_icon_cloudy;
-    }
-
-    return icon;
-}
-
-const lv_image_dsc_t* get_wind_icon(int wind_speed_mph)
-{
-    // Convert wind speed to Beaufort scale
-    int beaufort;
-    if (wind_speed_mph < 1) beaufort = 0;
-    else if (wind_speed_mph <= 3) beaufort = 1;
-    else if (wind_speed_mph <= 7) beaufort = 2;
-    else if (wind_speed_mph <= 12) beaufort = 3;
-    else if (wind_speed_mph <= 18) beaufort = 4;
-    else if (wind_speed_mph <= 24) beaufort = 5;
-    else if (wind_speed_mph <= 31) beaufort = 6;
-    else if (wind_speed_mph <= 38) beaufort = 7;
-    else if (wind_speed_mph <= 46) beaufort = 8;
-    else if (wind_speed_mph <= 54) beaufort = 9;
-    else if (wind_speed_mph <= 63) beaufort = 10;
-    else if (wind_speed_mph <= 72) beaufort = 11;
-    else beaufort = 12;
-
-    switch (beaufort) {
-        case 0: return &icon_wind_0;
-        case 1: return &icon_wind_1;
-        case 2: return &icon_wind_2;
-        case 3: return &icon_wind_3;
-        case 4: return &icon_wind_4;
-        case 5: return &icon_wind_5;
-        case 6: return &icon_wind_6;
-        case 7: return &icon_wind_7;
-        case 8: return &icon_wind_8;
-        case 9: return &icon_wind_9;
-        case 10: return &icon_wind_10;
-        case 11: return &icon_wind_11;
-        case 12: return &icon_wind_12;
-        default: return &icon_wind_3;
-    }
-}
-'''
-
-    with open(OUTPUT_DIR / "weather_icons.cpp", 'w') as f:
-        f.write(source)
-    print(f"Generated: weather_icons.cpp")
-    
-    print("Done!")
 
 if __name__ == "__main__":
     main()

@@ -41,9 +41,18 @@ extern const lv_image_dsc_t icon_wind_9;
 extern const lv_image_dsc_t icon_wind_10;
 extern const lv_image_dsc_t icon_wind_11;
 extern const lv_image_dsc_t icon_wind_12;
+extern const lv_image_dsc_t icon_moon_new;
+extern const lv_image_dsc_t icon_moon_waxing_crescent;
+extern const lv_image_dsc_t icon_moon_first_quarter;
+extern const lv_image_dsc_t icon_moon_waxing_gibbous;
+extern const lv_image_dsc_t icon_moon_full;
+extern const lv_image_dsc_t icon_moon_waning_gibbous;
+extern const lv_image_dsc_t icon_moon_last_quarter;
+extern const lv_image_dsc_t icon_moon_waning_crescent;
 
 const lv_image_dsc_t* get_weather_icon(int wmo_code, bool is_day, bool small_size);
 const lv_image_dsc_t* get_wind_icon(int wind_speed_mph);
+const lv_image_dsc_t* get_moon_icon(int phase);
 
 #ifdef __cplusplus
 }

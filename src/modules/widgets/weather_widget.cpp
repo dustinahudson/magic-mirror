@@ -13,7 +13,9 @@ WeatherWidget::WeatherWidget(lv_obj_t* parent, CTimer* timer)
       m_pLocationLabel(nullptr),
       m_pWindIcon(nullptr),
       m_pWindLabel(nullptr),
-      m_pSunsetIcon(nullptr),
+      m_pSunriseIcon(nullptr),
+      m_pSunriseLabel(nullptr),
+      m_pMoonIcon(nullptr),
       m_pSunsetLabel(nullptr),
       m_pWeatherIcon(nullptr),
       m_pTempLabel(nullptr),
@@ -160,9 +162,24 @@ void WeatherWidget::CreateUI()
     lv_obj_set_style_border_width(spacer, 0, LV_PART_MAIN);
     lv_obj_set_size(spacer, 10, 1);
 
-    // Sunset icon
-    m_pSunsetIcon = lv_image_create(windSunRow);
-    lv_image_set_src(m_pSunsetIcon, &icon_sunset);
+    // Sunrise icon (reuse sun/sunset graphic)
+    m_pSunriseIcon = lv_image_create(windSunRow);
+    lv_image_set_src(m_pSunriseIcon, &icon_sunset);
+
+    // Sunrise label
+    m_pSunriseLabel = lv_label_create(windSunRow);
+    lv_obj_set_style_text_color(m_pSunriseLabel, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(m_pSunriseLabel, &lv_font_montserrat_24, LV_PART_MAIN);
+
+    // Spacer
+    lv_obj_t* spacer2 = lv_obj_create(windSunRow);
+    lv_obj_set_style_bg_opa(spacer2, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(spacer2, 0, LV_PART_MAIN);
+    lv_obj_set_size(spacer2, 10, 1);
+
+    // Moon phase icon
+    m_pMoonIcon = lv_image_create(windSunRow);
+    lv_image_set_src(m_pMoonIcon, &icon_moon_new);
 
     // Sunset label
     m_pSunsetLabel = lv_label_create(windSunRow);
@@ -286,8 +303,15 @@ void WeatherWidget::UpdateDisplay()
              m_weatherData.windSpeed, windDir);
     lv_label_set_text(m_pWindLabel, m_windSunBuffer);
 
-    // Sunset label
+    // Sunrise + sunset labels
+    lv_label_set_text(m_pSunriseLabel, m_weatherData.sunriseTime);
     lv_label_set_text(m_pSunsetLabel, m_weatherData.sunsetTime);
+
+    // Moon phase icon
+    const lv_image_dsc_t* moonIcon = get_moon_icon(m_weatherData.moonPhase);
+    if (moonIcon) {
+        lv_image_set_src(m_pMoonIcon, moonIcon);
+    }
 
     // Weather icon - use image based on weather code
     // TODO: Determine day/night based on current time vs sunrise/sunset
