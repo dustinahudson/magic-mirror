@@ -35,10 +35,13 @@ namespace mm {
 
 WeatherService::WeatherService(HttpClient* pHttpClient)
     : m_pHttpClient(pHttpClient),
-      m_isMetric(false)
+      m_isMetric(false),
+      m_nwsLat(0.0f),
+      m_nwsLon(0.0f)
 {
     m_city[0] = '\0';
     m_state[0] = '\0';
+    m_nwsForecastUrl[0] = '\0';
 }
 
 void WeatherService::SetLocationName(const char* city, const char* state)
@@ -90,9 +93,80 @@ bool WeatherService::FetchWeather(float latitude, float longitude, WeatherData* 
         outData->city[sizeof(outData->city) - 1] = '\0';
         strncpy(outData->state, m_state, sizeof(outData->state) - 1);
         outData->state[sizeof(outData->state) - 1] = '\0';
+
+        // Best-effort: overlay NWS observed conditions. Failure is fine —
+        // api.weather.gov is US-only and can be flaky; keep Open-Meteo data.
+        if (!ApplyNwsOverride(latitude, longitude, outData)) {
+            CLogger::Get()->Write(FromWeather, LogDebug, "NWS override skipped");
+        }
     }
 
     return success;
+}
+
+bool WeatherService::ApplyNwsOverride(float latitude, float longitude, WeatherData* outData)
+{
+    if (!m_pHttpClient || !outData) return false;
+
+    // Step 1: resolve the hourly-forecast URL for this point. Cache per lat/lon
+    // since the gridpoint mapping is static.
+    if (m_nwsForecastUrl[0] == '\0' ||
+        m_nwsLat != latitude || m_nwsLon != longitude) {
+        CString path;
+        path.Format("/points/%.4f,%.4f", latitude, longitude);
+        HttpResponse* resp = HttpClient::GetSharedResponse();
+        if (!m_pHttpClient->Get("api.weather.gov", (const char*)path, true, resp)) {
+            return false;
+        }
+        if (!ExtractString(resp->body, "\"forecastHourly\"",
+                           m_nwsForecastUrl, sizeof(m_nwsForecastUrl))) {
+            m_nwsForecastUrl[0] = '\0';
+            return false;
+        }
+        m_nwsLat = latitude;
+        m_nwsLon = longitude;
+        CLogger::Get()->Write(FromWeather, LogDebug, "NWS grid cached: %s", m_nwsForecastUrl);
+    }
+
+    // Step 2: fetch the hourly forecast and take the first (current) period.
+    HttpResponse* resp = HttpClient::GetSharedResponse();
+    if (!m_pHttpClient->Get(m_nwsForecastUrl, resp)) {
+        return false;
+    }
+
+    // The first shortForecast in the response is the current-hour period.
+    char shortForecast[128];
+    if (!ExtractString(resp->body, "\"shortForecast\"",
+                       shortForecast, sizeof(shortForecast))) {
+        return false;
+    }
+
+    // Keyword → WMO code. Ordered by severity so the worst match wins.
+    int wmo = -1;
+    const char* condition = NULL;
+    if (strstr(shortForecast, "Thunder")) {
+        wmo = 95; condition = "Thunderstorm";
+    } else if (strstr(shortForecast, "Snow")) {
+        wmo = 73; condition = "Snow";
+    } else if (strstr(shortForecast, "Rain") || strstr(shortForecast, "Shower")) {
+        wmo = 63; condition = "Rain";
+    } else if (strstr(shortForecast, "Drizzle")) {
+        wmo = 53; condition = "Drizzle";
+    } else if (strstr(shortForecast, "Fog") || strstr(shortForecast, "Haze")) {
+        wmo = 45; condition = "Fog";
+    }
+
+    if (wmo >= 0) {
+        outData->weatherCode = wmo;
+        strncpy(outData->condition, condition, sizeof(outData->condition) - 1);
+        outData->condition[sizeof(outData->condition) - 1] = '\0';
+        CLogger::Get()->Write(FromWeather, LogNotice,
+                              "NWS override: \"%s\" -> WMO %d", shortForecast, wmo);
+    } else {
+        CLogger::Get()->Write(FromWeather, LogDebug,
+                              "NWS says \"%s\" — no override", shortForecast);
+    }
+    return true;
 }
 
 bool WeatherService::FetchForecast(float latitude, float longitude, ForecastDay* outForecast, int* outCount)

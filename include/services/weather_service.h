@@ -35,6 +35,10 @@ private:
     // Parse JSON response for forecast
     bool ParseForecast(const char* json, ForecastDay* outForecast, int* outCount);
 
+    // Overlay NWS (api.weather.gov) current-period shortForecast onto outData.
+    // Best-effort: returns false on any failure, in which case Open-Meteo data is kept as-is.
+    bool ApplyNwsOverride(float latitude, float longitude, WeatherData* outData);
+
     // Simple JSON value extraction helpers
     bool ExtractFloat(const char* json, const char* key, float* outValue);
     bool ExtractInt(const char* json, const char* key, int* outValue);
@@ -44,6 +48,11 @@ private:
     bool        m_isMetric;
     char        m_city[48];
     char        m_state[16];
+
+    // Cached NWS gridpoint hourly-forecast URL (per lat/lon)
+    char        m_nwsForecastUrl[256];
+    float       m_nwsLat;
+    float       m_nwsLon;
 };
 
 } // namespace mm
