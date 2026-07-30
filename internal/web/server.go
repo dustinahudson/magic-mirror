@@ -254,14 +254,20 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	// Fixed set rather than a path parameter: this endpoint must never
 	// become a way to read arbitrary files off the device.
+	var path string
 	switch name {
 	case "mm.log", "network.log":
+		path = filepath.Join(s.stateDir, "logs", name)
+	case "messages":
+		// syslog, which lives in RAM. Carries anything the init scripts and
+		// daemons report that does not reach our own logs.
+		path = "/var/log/messages"
+	case "dmesg":
+		path = "/var/log/dmesg"
 	default:
 		http.Error(w, "unknown log file", http.StatusBadRequest)
 		return
 	}
-
-	path := filepath.Join(s.stateDir, "logs", name)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		http.Error(w, "log unavailable: "+err.Error(), http.StatusNotFound)
