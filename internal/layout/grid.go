@@ -35,13 +35,13 @@ func (p Pos) Span() Span { return Span{Cols: p.ColSpan, Rows: p.RowSpan} }
 
 // Grid divides a rectangle into evenly sized cells.
 type Grid struct {
-	Bounds  image.Rectangle
-	Cols    int
-	Rows    int
-	PadX    int
-	PadY    int
-	GapX    int
-	GapY    int
+	Bounds image.Rectangle
+	Cols   int
+	Rows   int
+	PadX   int
+	PadY   int
+	GapX   int
+	GapY   int
 }
 
 // New returns a Grid over bounds using the v1 defaults.
