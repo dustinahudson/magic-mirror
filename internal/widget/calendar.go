@@ -289,6 +289,74 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 	}
 }
 
+// maxEventLines caps how far one event's text may wrap inside a day cell.
+//
+// One line ellipsised early — "9am Coffee with…" — cuts exactly the part that
+// distinguishes one meeting from another, and a month cell has the height to
+// spare. The cap exists because without it a single long title could swallow
+// a day and push everything else out.
+const maxEventLines = 3
+
+// eventChip is one event with its text already wrapped to the column.
+type eventChip struct {
+	event ics.Event
+	lines []string
+	color render.RGBA
+}
+
+// planEvents wraps events to width and decides how many fit in room lines.
+//
+// Separate from drawing because it is where the decisions are: an event's
+// height is now its own, so what fits cannot be known until the text has been
+// laid out, and the arithmetic deciding what gets dropped is worth testing
+// without a framebuffer.
+//
+// Returns the chips to draw and how many events were left over.
+func planEvents(events []ics.Event, face *render.Face, width, sq, room int,
+	loc *time.Location) ([]eventChip, int) {
+
+	var chips []eventChip
+	used := 0
+
+	for _, e := range events {
+		c, ok := render.ParseHexColor(e.Color)
+		if !ok {
+			c = render.Secondary
+		}
+
+		// All-day text is inset within its filled block; a timed event gives
+		// up a gutter to its colour square, and its continuation lines hang
+		// under the first so the gutter stays clear.
+		text, avail := e.Summary, width-6
+		if !e.AllDay {
+			t := strings.ToLower(e.Start.In(loc).Format("3:04pm"))
+			text = strings.Replace(t, ":00", "", 1) + " " + e.Summary
+			avail = width - sq - 4
+		}
+
+		lines := face.Wrap(text, avail, maxEventLines)
+		if len(lines) == 0 {
+			continue
+		}
+		if used+len(lines) > room {
+			break
+		}
+		chips = append(chips, eventChip{event: e, lines: lines, color: c})
+		used += len(lines)
+	}
+
+	// Reserve a line for the count, dropping laid-out events until it fits.
+	// The count outranks the last event it displaces: it is the only thing
+	// telling you the day holds more than what is shown.
+	overflow := len(events) - len(chips)
+	for overflow > 0 && used+1 > room && len(chips) > 0 {
+		used -= len(chips[len(chips)-1].lines)
+		chips = chips[:len(chips)-1]
+		overflow++
+	}
+	return chips, overflow
+}
+
 // drawEvents stacks event chips under the date, as v1 did.
 //
 // Two forms, both carried over from v1 (calendar_widget.cpp:420-470):
@@ -299,6 +367,12 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 //   - Timed events are a small colour square followed by the time and title
 //     on a transparent background, so a day of meetings stays legible
 //     rather than becoming a wall of colour.
+//
+// A title too long for its column wraps to at most maxEventLines lines
+// before it is ellipsised. One line ellipsised early — "9am Coffee with…" —
+// hides exactly the part that distinguishes one meeting from another, and a
+// month cell has the height to spare. The cap exists because without it a
+// single long title could fill a day and push everything else out.
 //
 // Whatever does not fit becomes a "+2 more" line. Silently dropping events
 // would make a busy day indistinguishable from a quiet one.
@@ -322,37 +396,28 @@ func (w *Calendar) drawEvents(dst *image.RGBA, events []ics.Event, area image.Re
 		return
 	}
 
-	shown := events
-	overflow := 0
-	if len(events) > room {
-		// Reserve the last line for the count when it would not all fit.
-		shown = events[:max(0, room-1)]
-		overflow = len(events) - len(shown)
-	}
+	sq := face.Height() * 2 / 3
+	chips, overflow := planEvents(events, face, area.Dx(), sq, room, ctx.Location())
 
 	y := area.Min.Y
-	for _, e := range shown {
-		c, ok := render.ParseHexColor(e.Color)
-		if !ok {
-			c = render.Secondary
-		}
-
-		if e.AllDay {
-			chip := image.Rect(area.Min.X, y, area.Max.X, y+face.Height()+1)
-			render.FillRounded(dst, chip, 3, c)
-			face.DrawTop(dst, chip.Min.X+3, y,
-				face.Truncate(e.Summary, chip.Dx()-6), contrastOn(c))
+	for _, ch := range chips {
+		if ch.event.AllDay {
+			// The block grows to cover every line, so a wrapped all-day
+			// event stays one solid chip rather than a stack of bars.
+			block := image.Rect(area.Min.X, y, area.Max.X, y+len(ch.lines)*lineH-1)
+			render.FillRounded(dst, block, 3, ch.color)
+			fg := contrastOn(ch.color)
+			for i, line := range ch.lines {
+				face.DrawTop(dst, block.Min.X+3, y+i*lineH, line, fg)
+			}
 		} else {
-			sq := face.Height() * 2 / 3
 			render.FillRounded(dst, image.Rect(area.Min.X, y+(face.Height()-sq)/2,
-				area.Min.X+sq, y+(face.Height()-sq)/2+sq), 2, c)
-
-			text := strings.ToLower(e.Start.In(ctx.Location()).Format("3:04pm")) + " " + e.Summary
-			text = strings.Replace(text, ":00", "", 1)
-			face.DrawTop(dst, area.Min.X+sq+4, y,
-				face.Truncate(text, area.Dx()-sq-4), render.Secondary)
+				area.Min.X+sq, y+(face.Height()-sq)/2+sq), 2, ch.color)
+			for i, line := range ch.lines {
+				face.DrawTop(dst, area.Min.X+sq+4, y+i*lineH, line, render.Secondary)
+			}
 		}
-		y += lineH
+		y += len(ch.lines) * lineH
 	}
 
 	if overflow > 0 && y+face.Height() <= area.Max.Y {
