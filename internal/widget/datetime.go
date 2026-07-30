@@ -167,23 +167,28 @@ func (w *DateTime) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 
 	end := timeFace.DrawTop(dst, x, y, clock, render.Primary)
 
-	// Seconds ride the top of the digits, am/pm sits on their baseline —
-	// what v1 expressed as LV_ALIGN_OUT_RIGHT_TOP and _RIGHT_BOTTOM.
+	// Seconds and am/pm form a stacked column to the right of the digits,
+	// anchored from the bottom: am/pm sits on the clock's baseline and the
+	// seconds sit directly on top of it.
 	//
-	// Baseline rather than bottom-of-box for the am/pm: the two faces have
-	// different descents, so matching boxes would leave "pm" sitting
-	// slightly low against the digits. Face.Draw takes a baseline directly,
-	// which makes the alignment explicit instead of arithmetic on ascents.
+	// Anchoring from the bottom rather than spreading both against the
+	// digits' full height keeps the pair reading as one unit. Baseline
+	// rather than bottom-of-box for the am/pm, because the two faces have
+	// different descents and matching boxes would leave it sitting low.
 	if secs != "" || ampm != "" {
 		gap := max(4, size/16)
 		x := end + gap
 		baseline := y + timeFace.Ascent()
 
-		if secs != "" {
-			subFace.DrawTop(dst, x, y, secs, render.Primary)
-		}
+		ampmTop := baseline - subFace.Ascent()
 		if ampm != "" {
 			subFace.Draw(dst, x, baseline, ampm, render.Secondary)
+		} else {
+			// No am/pm to stack on: the seconds take the baseline instead.
+			ampmTop = baseline - subFace.Ascent() + subFace.Height()
+		}
+		if secs != "" {
+			subFace.DrawTop(dst, x, ampmTop-subFace.Height(), secs, render.Primary)
 		}
 	}
 }
