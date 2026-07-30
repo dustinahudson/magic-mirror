@@ -15,14 +15,14 @@
     font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   header {
-    position: sticky; top: 0; z-index: 10;
+    position: sticky; top: 0; z-index: 20;
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
     padding: .9rem 1.25rem; background: var(--bg);
     border-bottom: 1px solid var(--line);
   }
-  header h1 { font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: .01em; }
-  header .spacer { flex: 1; }
-  main { max-width: 62rem; margin: 0 auto; padding: 1.25rem; }
+  header h1 { font-size: 1rem; margin: 0; font-weight: 600; }
+  .spacer { flex: 1; }
+  main { max-width: 68rem; margin: 0 auto; padding: 1.25rem; }
   section { margin-bottom: 2rem; }
   h2 {
     font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
@@ -42,7 +42,6 @@
     padding: .45rem .6rem; font: inherit; font-size: .9rem; width: 100%;
   }
   input[type=checkbox] { width: auto; accent-color: var(--accent); }
-  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   button {
     background: #1d1d24; color: var(--fg); border: 1px solid var(--line);
     border-radius: 6px; padding: .45rem .85rem; font: inherit; font-size: .875rem;
@@ -51,23 +50,53 @@
   button:hover { border-color: var(--faint); }
   button.primary { background: var(--accent); color: #06111f; border-color: transparent; font-weight: 600; }
   button.danger  { color: var(--err); }
-  .widget-head {
-    display: flex; align-items: center; gap: .6rem; margin-bottom: .75rem;
-    padding-bottom: .6rem; border-bottom: 1px solid var(--line);
+  .muted { color: var(--faint); font-size: .8rem; }
+
+  /* ---- grid editor ---- */
+  #stage {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    touch-action: none;          /* we handle panning ourselves */
+    user-select: none;
+    margin-bottom: .6rem;
   }
-  .widget-head strong { font-size: .95rem; }
-  .widget-head code { color: var(--faint); font-size: .8rem; }
-  .pos { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; max-width: 22rem; }
-  .pos label { font-size: .7rem; }
-  #toast {
-    position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
-    padding: .7rem 1.1rem; border-radius: 8px; font-size: .875rem;
-    border: 1px solid var(--line); background: var(--panel);
-    max-width: min(46rem, 92vw); display: none; white-space: pre-wrap;
+  /* The cell grid, drawn as a background so it costs no DOM nodes. */
+  #stage .rule {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, #1b1b22 1px, transparent 1px),
+      linear-gradient(to bottom, #1b1b22 1px, transparent 1px);
   }
-  #toast.ok   { border-color: var(--ok);   color: var(--ok); }
-  #toast.err  { border-color: var(--err);  color: var(--err); }
-  #toast.warn { border-color: var(--warn); color: var(--warn); }
+  .tile {
+    position: absolute;
+    background: #1a2030; border: 1px solid #33507e; border-radius: 4px;
+    color: #9dc0ff; font-size: .72rem; line-height: 1.2;
+    padding: 3px 5px; overflow: hidden; cursor: grab;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .tile:hover { border-color: var(--accent); }
+  .tile.selected { background: #22304a; border-color: var(--accent); color: #cfe0ff; z-index: 5; }
+  .tile.dragging { cursor: grabbing; opacity: .85; z-index: 10; }
+  .tile.overlap { border-color: var(--warn); background: #322a18; color: #f0d38a; }
+  .tile .tname { font-weight: 600; }
+  .tile .tmeta { color: inherit; opacity: .6; font-size: .68rem; }
+  .tile .grip {
+    position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+    cursor: nwse-resize;
+    background:
+      linear-gradient(135deg, transparent 50%, currentColor 50%, currentColor 60%, transparent 60%,
+                      transparent 70%, currentColor 70%, currentColor 80%, transparent 80%);
+    opacity: .55;
+  }
+  .tile .grip:hover { opacity: 1; }
+
+  .editor-bar { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+
+  /* ---- status ---- */
   .status-grid { display: grid; gap: .4rem; }
   .status-row {
     display: flex; gap: .75rem; align-items: baseline;
@@ -76,22 +105,21 @@
   }
   .status-row .key { font-weight: 600; min-width: 7rem; }
   .badge { font-size: .7rem; padding: .1rem .45rem; border-radius: 999px; border: 1px solid; }
-  .badge.fresh  { color: var(--ok);   border-color: var(--ok); }
-  .badge.stale  { color: var(--warn); border-color: var(--warn); }
-  .badge.failed { color: var(--err);  border-color: var(--err); }
-  .badge.never  { color: var(--faint);border-color: var(--faint); }
+  .badge.fresh { color: var(--ok); border-color: var(--ok); }
+  .badge.stale { color: var(--warn); border-color: var(--warn); }
+  .badge.failed { color: var(--err); border-color: var(--err); }
+  .badge.never { color: var(--faint); border-color: var(--faint); }
   .status-row .err { color: var(--err); font-size: .78rem; }
-  .grid-preview {
-    display: grid; gap: 2px; background: var(--line); border: 1px solid var(--line);
-    border-radius: 6px; overflow: hidden; aspect-ratio: 16/9; margin-bottom: .75rem;
+
+  #toast {
+    position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+    padding: .7rem 1.1rem; border-radius: 8px; font-size: .875rem;
+    border: 1px solid var(--line); background: var(--panel);
+    max-width: min(46rem, 92vw); display: none; white-space: pre-wrap; z-index: 50;
   }
-  .grid-preview .cell { background: var(--bg); }
-  .grid-preview .tile {
-    background: #23283a; border: 1px solid var(--accent); border-radius: 3px;
-    font-size: .6rem; color: var(--accent); padding: 1px 3px; overflow: hidden;
-    display: flex; align-items: center; justify-content: center; text-align: center;
-  }
-  .muted { color: var(--faint); font-size: .8rem; }
+  #toast.ok { border-color: var(--ok); color: var(--ok); }
+  #toast.err { border-color: var(--err); color: var(--err); }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
 </style>
 
 <header>
@@ -104,6 +132,22 @@
 
 <main>
   <section>
+    <h2>Layout</h2>
+    <div id="stage"><div class="rule"></div></div>
+    <div class="editor-bar">
+      <select id="new-widget-type" style="flex:0 1 15rem"></select>
+      <button id="add-widget">Add widget</button>
+      <span class="spacer"></span>
+      <span class="muted" id="layout-note"></span>
+    </div>
+  </section>
+
+  <section id="selected-section">
+    <h2>Selected widget</h2>
+    <div id="selected"></div>
+  </section>
+
+  <section>
     <h2>Source health</h2>
     <div class="status-grid" id="status"></div>
   </section>
@@ -112,6 +156,11 @@
     <h2>General</h2>
     <div class="card">
       <div class="row">
+        <div class="field">
+          <label for="hostname">Hostname</label>
+          <input id="hostname" placeholder="magicmirror">
+          <span class="help">Reachable as &lt;hostname&gt;.local on any network.</span>
+        </div>
         <div class="field">
           <label for="timezone">Timezone</label>
           <input id="timezone" placeholder="America/Chicago">
@@ -126,7 +175,6 @@
         <div class="field">
           <label for="zipcode">Weather location</label>
           <input id="zipcode" placeholder="64111">
-          <span class="help">Postal code or place name, resolved via Open-Meteo.</span>
         </div>
       </div>
     </div>
@@ -141,21 +189,6 @@
     <div id="calendars"></div>
     <button id="add-calendar">Add calendar</button>
   </section>
-
-  <section>
-    <h2>Layout</h2>
-    <div class="grid-preview" id="preview"></div>
-    <p class="muted" id="layout-note"></p>
-  </section>
-
-  <section>
-    <h2>Widgets</h2>
-    <div id="widgets"></div>
-    <div class="row" style="margin-top:.75rem">
-      <select id="new-widget-type" style="flex:0 1 16rem"></select>
-      <button id="add-widget">Add widget</button>
-    </div>
-  </section>
 </main>
 
 <div id="toast"></div>
@@ -165,8 +198,11 @@
 
 let config = null;
 let types = [];
+let selectedId = null;
 
 const $ = id => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -186,11 +222,15 @@ function toast(msg, kind = 'ok') {
   t.textContent = msg;
   t.className = kind;
   t.style.display = 'block';
-  clearTimeout(toast._timer);
-  // Errors stay long enough to actually read; successes get out of the way.
-  toast._timer = setTimeout(() => { t.style.display = 'none'; },
-    kind === 'err' ? 12000 : 3500);
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, kind === 'err' ? 12000 : 3500);
 }
+
+const gridCols = () => (config.layout && config.layout.cols) || 12;
+const gridRows = () => (config.layout && config.layout.rows) || 16;
+const descFor  = t => types.find(x => x.type === t);
+
+/* ---------- load ---------- */
 
 async function load() {
   const [c, t] = await Promise.all([
@@ -199,11 +239,25 @@ async function load() {
   ]);
   config = c;
   types = t || [];
+  (config.widgets || []).forEach(normalisePos);
   renderAll();
   refreshStatus();
 }
 
+// Positions arrive from a hand-edited file as often as from this page, so
+// fill in anything missing rather than trusting the shape.
+function normalisePos(inst) {
+  const d = descFor(inst.type);
+  inst.pos = inst.pos || {};
+  const p = inst.pos;
+  p.col = p.col | 0;
+  p.row = p.row | 0;
+  p.colSpan = p.colSpan || (d ? d.defaultSpan.cols : 3);
+  p.rowSpan = p.rowSpan || (d ? d.defaultSpan.rows : 3);
+}
+
 function renderAll() {
+  $('hostname').value = config.hostname || '';
   $('timezone').value = config.timezone || '';
   $('units').value = config.units || 'imperial';
   $('zipcode').value = (config.weather && config.weather.zipcode) || '';
@@ -212,103 +266,207 @@ function renderAll() {
     ...types.map(t => el('option', { value: t.type }, t.name)));
 
   renderCalendars();
-  renderWidgets();
-  renderPreview();
+  renderGrid();
+  renderSelected();
 }
 
-/* ---------- calendars ---------- */
+/* ---------- grid editor ---------- */
 
-function renderCalendars() {
-  const host = $('calendars');
-  host.replaceChildren();
+// Overlap is allowed but flagged. The renderer draws widgets in order and a
+// later one paints over an earlier one, which is occasionally what you want
+// and usually a mistake — so this warns rather than forbids.
+function overlapping() {
+  const out = new Set();
+  const ws = config.widgets || [];
+  for (let i = 0; i < ws.length; i++) {
+    for (let j = i + 1; j < ws.length; j++) {
+      const a = ws[i].pos, b = ws[j].pos;
+      if (a.col < b.col + b.colSpan && b.col < a.col + a.colSpan &&
+          a.row < b.row + b.rowSpan && b.row < a.row + a.rowSpan) {
+        out.add(ws[i].id); out.add(ws[j].id);
+      }
+    }
+  }
+  return out;
+}
 
-  (config.calendars || []).forEach((feed, i) => {
-    host.append(el('div', { class: 'card' },
-      el('div', { class: 'row' },
-        field('ID', el('input', {
-          value: feed.id || '',
-          oninput: e => { feed.id = e.target.value; renderWidgets(); },
-        }), 'Referenced by widgets. Changing it unlinks them.'),
-        field('Name', el('input', {
-          value: feed.name || '',
-          oninput: e => { feed.name = e.target.value; },
+function renderGrid() {
+  const stage = $('stage');
+  const cols = gridCols(), rows = gridRows();
+
+  // Redraw the cell rules to match the configured grid.
+  const rule = stage.querySelector('.rule');
+  rule.style.backgroundSize = `${100 / cols}% ${100 / rows}%`;
+
+  [...stage.querySelectorAll('.tile')].forEach(n => n.remove());
+
+  const bad = overlapping();
+
+  for (const inst of config.widgets || []) {
+    const p = inst.pos;
+    const d = descFor(inst.type);
+
+    const tile = el('div', {
+      class: 'tile'
+        + (inst.id === selectedId ? ' selected' : '')
+        + (bad.has(inst.id) ? ' overlap' : ''),
+      'data-id': inst.id,
+      style: `left:${p.col / cols * 100}%;top:${p.row / rows * 100}%;`
+           + `width:${p.colSpan / cols * 100}%;height:${p.rowSpan / rows * 100}%;`,
+      title: d ? d.name : inst.type,
+    },
+      el('span', { class: 'tname' }, inst.id),
+      el('span', { class: 'tmeta' }, `${p.colSpan}×${p.rowSpan}`),
+      el('div', { class: 'grip', 'data-grip': '1' }),
+    );
+    stage.append(tile);
+  }
+
+  const n = bad.size;
+  $('layout-note').textContent = n
+    ? `${n} widget${n === 1 ? '' : 's'} overlapping`
+    : `${cols}×${rows} grid — drag to move, corner to resize`;
+}
+
+// Pointer events rather than mouse events, so this works with a trackpad, a
+// mouse, and a finger on the phone you are already holding to set the thing
+// up.
+let drag = null;
+
+$('stage').addEventListener('pointerdown', e => {
+  const tile = e.target.closest('.tile');
+  if (!tile) { select(null); return; }
+
+  const inst = (config.widgets || []).find(w => w.id === tile.dataset.id);
+  if (!inst) return;
+  select(inst.id);
+
+  const rect = $('stage').getBoundingClientRect();
+  drag = {
+    inst,
+    mode: e.target.dataset.grip ? 'resize' : 'move',
+    x0: e.clientX, y0: e.clientY,
+    cw: rect.width / gridCols(),
+    ch: rect.height / gridRows(),
+    orig: { ...inst.pos },
+    moved: false,
+  };
+  tile.classList.add('dragging');
+  tile.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+$('stage').addEventListener('pointermove', e => {
+  if (!drag) return;
+
+  // Round rather than floor: the tile snaps to the nearest cell, so a drag
+  // that lands a pixel short of a boundary still does what you meant.
+  const dc = Math.round((e.clientX - drag.x0) / drag.cw);
+  const dr = Math.round((e.clientY - drag.y0) / drag.ch);
+  if (dc || dr) drag.moved = true;
+
+  const cols = gridCols(), rows = gridRows();
+  const p = drag.inst.pos, o = drag.orig;
+  const d = descFor(drag.inst.type);
+  const minC = d ? Math.max(1, d.minSpan.cols) : 1;
+  const minR = d ? Math.max(1, d.minSpan.rows) : 1;
+
+  if (drag.mode === 'move') {
+    p.col = clamp(o.col + dc, 0, cols - o.colSpan);
+    p.row = clamp(o.row + dr, 0, rows - o.rowSpan);
+  } else {
+    p.colSpan = clamp(o.colSpan + dc, minC, cols - o.col);
+    p.rowSpan = clamp(o.rowSpan + dr, minR, rows - o.row);
+  }
+  renderGrid();
+});
+
+function endDrag() {
+  if (!drag) return;
+  const wasMoved = drag.moved;
+  drag = null;
+  [...$('stage').querySelectorAll('.dragging')].forEach(n => n.classList.remove('dragging'));
+  if (wasMoved) renderSelected();   // keep the numeric fields in step
+}
+$('stage').addEventListener('pointerup', endDrag);
+$('stage').addEventListener('pointercancel', endDrag);
+
+function select(id) {
+  selectedId = id;
+  renderGrid();
+  renderSelected();
+}
+
+/* ---------- selected widget ---------- */
+
+function renderSelected() {
+  const host = $('selected');
+  const inst = (config.widgets || []).find(w => w.id === selectedId);
+
+  if (!inst) {
+    host.replaceChildren(el('p', { class: 'muted' },
+      'Select a widget in the layout above, or add one.'));
+    return;
+  }
+
+  const d = descFor(inst.type);
+  const p = inst.pos;
+
+  const num = (key, label, min, max) => el('div', { class: 'field' },
+    el('label', {}, label),
+    el('input', {
+      type: 'number', min, max, value: p[key],
+      oninput: e => {
+        p[key] = clamp(parseInt(e.target.value, 10) || 0, min, max);
+        renderGrid();
+      },
+    }));
+
+  host.replaceChildren(el('div', { class: 'card' },
+    el('div', { class: 'row', style: 'align-items:center;margin-bottom:.75rem' },
+      el('strong', {}, d ? d.name : inst.type),
+      !d ? el('span', { class: 'badge failed' }, 'unknown type') : null,
+      el('span', { class: 'spacer' }),
+      el('button', {
+        class: 'danger',
+        onclick: () => {
+          config.widgets = config.widgets.filter(w => w.id !== inst.id);
+          select(null);
+        },
+      }, 'Remove'),
+    ),
+
+    el('div', { class: 'row' },
+      el('div', { class: 'field' },
+        el('label', {}, 'ID'),
+        el('input', {
+          value: inst.id,
+          oninput: e => {
+            const old = inst.id;
+            inst.id = e.target.value;
+            if (selectedId === old) selectedId = inst.id;
+            renderGrid();
+          },
         })),
-        field('Colour', el('input', {
-          type: 'color', value: feed.color || '#52FA7F',
-          oninput: e => { feed.color = e.target.value; },
-        })),
-      ),
-      el('div', { class: 'row', style: 'margin-top:.6rem' },
-        field('ICS URL', el('input', {
-          value: feed.url || '', placeholder: 'https://…/basic.ics',
-          oninput: e => { feed.url = e.target.value; },
-        }), 'Treat this like a password — it grants read access to the calendar.'),
-        el('button', {
-          class: 'danger',
-          onclick: () => { config.calendars.splice(i, 1); renderCalendars(); renderWidgets(); },
-        }, 'Remove'),
-      ),
-    ));
-  });
+      num('col', 'Column', 0, gridCols() - 1),
+      num('row', 'Row', 0, gridRows() - 1),
+      num('colSpan', 'Width', d ? d.minSpan.cols : 1, gridCols()),
+      num('rowSpan', 'Height', d ? d.minSpan.rows : 1, gridRows()),
+    ),
+
+    // Everything below is generated from the widget's own descriptor.
+    // Adding a widget type in Go requires no change to this file.
+    d && d.fields && d.fields.length
+      ? el('div', { class: 'row', style: 'margin-top:.9rem' },
+          ...d.fields.map(f => renderField(inst, f)))
+      : null,
+  ));
 }
 
 function field(label, input, help) {
   return el('div', { class: 'field' },
-    el('label', {}, label),
-    input,
+    el('label', {}, label), input,
     help ? el('span', { class: 'help' }, help) : null);
-}
-
-/* ---------- widgets ---------- */
-
-function renderWidgets() {
-  const host = $('widgets');
-  host.replaceChildren();
-
-  (config.widgets || []).forEach((inst, i) => {
-    const desc = types.find(t => t.type === inst.type);
-
-    host.append(el('div', { class: 'card' },
-      el('div', { class: 'widget-head' },
-        el('strong', {}, desc ? desc.name : inst.type),
-        el('code', {}, inst.id),
-        !desc ? el('span', { class: 'badge failed' }, 'unknown type') : null,
-        el('span', { class: 'spacer', style: 'flex:1' }),
-        el('button', {
-          class: 'danger',
-          onclick: () => { config.widgets.splice(i, 1); renderWidgets(); renderPreview(); },
-        }, 'Remove'),
-      ),
-
-      el('div', { class: 'row' },
-        field('ID', el('input', {
-          value: inst.id || '',
-          oninput: e => { inst.id = e.target.value; },
-        })),
-      ),
-
-      el('div', { class: 'pos', style: 'margin-top:.6rem' },
-        ...['col', 'row', 'colSpan', 'rowSpan'].map(k =>
-          el('div', { class: 'field' },
-            el('label', {}, k),
-            el('input', {
-              type: 'number', min: 0, value: (inst.pos && inst.pos[k]) ?? 0,
-              oninput: e => {
-                inst.pos = inst.pos || {};
-                inst.pos[k] = parseInt(e.target.value, 10) || 0;
-                renderPreview();
-              },
-            }))),
-      ),
-
-      // Every field below is generated from the widget's own descriptor.
-      // Adding a widget type in Go requires no change to this file.
-      desc && desc.fields && desc.fields.length
-        ? el('div', { class: 'row', style: 'margin-top:.75rem' },
-            ...desc.fields.map(f => renderField(inst, f)))
-        : null,
-    ));
-  });
 }
 
 function renderField(inst, f) {
@@ -324,44 +482,33 @@ function renderField(inst, f) {
         onchange: e => set(e.target.checked),
       });
       break;
-
     case 'number':
       input = el('input', {
-        type: 'number',
-        value: cur ?? '',
+        type: 'number', value: cur ?? '',
         ...(f.min !== undefined ? { min: f.min } : {}),
         ...(f.max !== undefined ? { max: f.max } : {}),
         oninput: e => set(parseFloat(e.target.value)),
       });
       break;
-
     case 'select':
       input = el('select', { onchange: e => set(e.target.value) },
         ...(f.options || []).map(o =>
           el('option', { value: o.value, ...(o.value === cur ? { selected: 'selected' } : {}) },
             o.label)));
       break;
-
     case 'color':
-      input = el('input', {
-        type: 'color', value: cur || '#ffffff',
-        oninput: e => set(e.target.value),
-      });
+      input = el('input', { type: 'color', value: cur || '#ffffff', oninput: e => set(e.target.value) });
       break;
-
     case 'feeds': {
-      // Multi-select over the configured feeds, by id.
-      const selected = new Set(Array.isArray(cur) ? cur : []);
+      const sel = new Set(Array.isArray(cur) ? cur : []);
       input = el('div', {},
         ...(config.calendars || []).map(feed =>
           el('label', { style: 'display:flex;gap:.4rem;align-items:center;font-size:.85rem' },
             el('input', {
-              type: 'checkbox',
-              ...(selected.has(feed.id) ? { checked: 'checked' } : {}),
+              type: 'checkbox', ...(sel.has(feed.id) ? { checked: 'checked' } : {}),
               onchange: e => {
-                if (e.target.checked) selected.add(feed.id);
-                else selected.delete(feed.id);
-                set([...selected]);
+                e.target.checked ? sel.add(feed.id) : sel.delete(feed.id);
+                set([...sel]);
               },
             }),
             feed.name || feed.id || '(unnamed)')),
@@ -369,58 +516,48 @@ function renderField(inst, f) {
           : el('span', { class: 'help' }, 'No calendars configured yet.'));
       break;
     }
-
     default:
       input = el('input', {
         type: f.type === 'url' ? 'url' : 'text',
-        value: cur ?? '',
-        oninput: e => set(e.target.value),
+        value: cur ?? '', oninput: e => set(e.target.value),
       });
   }
-
   return field(f.label || f.key, input, f.help);
 }
 
-/* ---------- layout preview ---------- */
+/* ---------- calendars ---------- */
 
-function renderPreview() {
-  const cols = (config.layout && config.layout.cols) || 12;
-  const rows = (config.layout && config.layout.rows) || 16;
-
-  const host = $('preview');
-  host.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  host.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+function renderCalendars() {
+  const host = $('calendars');
   host.replaceChildren();
 
-  for (let i = 0; i < cols * rows; i++) host.append(el('div', { class: 'cell' }));
-
-  const overlaps = [];
-  (config.widgets || []).forEach((w, i) => {
-    const p = w.pos || {};
-    const c = (p.col | 0) + 1, r = (p.row | 0) + 1;
-    const cs = Math.max(1, p.colSpan | 0), rs = Math.max(1, p.rowSpan | 0);
-
-    host.append(el('div', {
-      class: 'tile',
-      style: `grid-column:${c}/span ${cs};grid-row:${r}/span ${rs}`,
-      title: `${w.id} (${w.type})`,
-    }, w.id));
-
-    for (const other of (config.widgets || []).slice(i + 1)) {
-      const q = other.pos || {};
-      const ax2 = (p.col | 0) + cs, ay2 = (p.row | 0) + rs;
-      const bx2 = (q.col | 0) + Math.max(1, q.colSpan | 0);
-      const by2 = (q.row | 0) + Math.max(1, q.rowSpan | 0);
-      if ((p.col | 0) < bx2 && (q.col | 0) < ax2 &&
-          (p.row | 0) < by2 && (q.row | 0) < ay2) {
-        overlaps.push(`${w.id} and ${other.id}`);
-      }
-    }
+  (config.calendars || []).forEach((feed, i) => {
+    host.append(el('div', { class: 'card' },
+      el('div', { class: 'row' },
+        field('ID', el('input', {
+          value: feed.id || '',
+          oninput: e => { feed.id = e.target.value; renderSelected(); },
+        }), 'Referenced by widgets. Changing it unlinks them.'),
+        field('Name', el('input', {
+          value: feed.name || '', oninput: e => { feed.name = e.target.value; },
+        })),
+        field('Colour', el('input', {
+          type: 'color', value: feed.color || '#52FA7F',
+          oninput: e => { feed.color = e.target.value; },
+        })),
+      ),
+      el('div', { class: 'row', style: 'margin-top:.6rem' },
+        field('ICS URL', el('input', {
+          value: feed.url || '', placeholder: 'https://…/basic.ics',
+          oninput: e => { feed.url = e.target.value; },
+        }), 'Treat this like a password — it grants read access to the calendar.'),
+        el('button', {
+          class: 'danger',
+          onclick: () => { config.calendars.splice(i, 1); renderCalendars(); renderSelected(); },
+        }, 'Remove'),
+      ),
+    ));
   });
-
-  $('layout-note').textContent = overlaps.length
-    ? `Overlapping: ${overlaps.join(', ')}. The later widget will paint over the earlier one.`
-    : `${cols}×${rows} grid.`;
 }
 
 /* ---------- status ---------- */
@@ -435,8 +572,7 @@ async function refreshStatus() {
         el('span', { class: 'key' }, src.key),
         el('span', { class: 'badge ' + src.status }, src.status),
         src.age ? el('span', { class: 'muted' }, 'updated ' + src.age + ' ago') : null,
-        src.error ? el('span', { class: 'err' }, src.error) : null,
-      )));
+        src.error ? el('span', { class: 'err' }, src.error) : null)));
     if (!(s.sources || []).length) {
       host.replaceChildren(el('p', { class: 'muted' }, 'No sources reporting yet.'));
     }
@@ -452,30 +588,47 @@ $('add-calendar').onclick = () => {
   const n = config.calendars.length + 1;
   config.calendars.push({ id: 'cal' + n, name: 'Calendar ' + n, url: '', color: '#52FA7F' });
   renderCalendars();
-  renderWidgets();
+  renderSelected();
 };
 
 $('add-widget').onclick = () => {
   const type = $('new-widget-type').value;
-  const desc = types.find(t => t.type === type);
-  if (!desc) return;
+  const d = descFor(type);
+  if (!d) return;
 
   config.widgets = config.widgets || [];
   let id = type, n = 1;
   while (config.widgets.some(w => w.id === id)) id = type + '-' + (++n);
 
+  // Drop it somewhere free rather than always at 0,0 on top of whatever is
+  // already there.
+  const spot = firstFreeSpot(d.defaultSpan.cols, d.defaultSpan.rows);
   config.widgets.push({
     id, type,
-    pos: { col: 0, row: 0, colSpan: desc.defaultSpan.cols, rowSpan: desc.defaultSpan.rows },
+    pos: { col: spot.col, row: spot.row, colSpan: d.defaultSpan.cols, rowSpan: d.defaultSpan.rows },
     config: {},
   });
-  renderWidgets();
-  renderPreview();
+  select(id);
 };
+
+function firstFreeSpot(w, h) {
+  const cols = gridCols(), rows = gridRows();
+  const taken = (c, r) => (config.widgets || []).some(x => {
+    const p = x.pos;
+    return c < p.col + p.colSpan && p.col < c + w && r < p.row + p.rowSpan && p.row < r + h;
+  });
+  for (let r = 0; r <= rows - h; r++) {
+    for (let c = 0; c <= cols - w; c++) {
+      if (!taken(c, r)) return { col: c, row: r };
+    }
+  }
+  return { col: 0, row: 0 };
+}
 
 $('reload').onclick = () => load().then(() => toast('Reloaded from the mirror'));
 
 $('save').onclick = async () => {
+  config.hostname = $('hostname').value;
   config.timezone = $('timezone').value;
   config.units = $('units').value;
   config.weather = config.weather || {};
@@ -488,7 +641,6 @@ $('save').onclick = async () => {
       body: JSON.stringify(config),
     });
     const body = await res.json();
-
     if (!res.ok) {
       toast((body.error || 'Save failed') + (body.note ? '\n' + body.note : ''), 'err');
       return;
@@ -502,6 +654,32 @@ $('save').onclick = async () => {
     toast('Could not reach the mirror: ' + e.message, 'err');
   }
 };
+
+// Nudge the selected widget with the arrow keys; shift resizes. Precision
+// that dragging cannot give you, without going to the number fields.
+addEventListener('keydown', e => {
+  if (!selectedId) return;
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+
+  const dirs = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const d = dirs[e.key];
+  if (!d) return;
+  e.preventDefault();
+
+  const inst = config.widgets.find(w => w.id === selectedId);
+  const p = inst.pos, desc = descFor(inst.type);
+  const cols = gridCols(), rows = gridRows();
+
+  if (e.shiftKey) {
+    p.colSpan = clamp(p.colSpan + d[0], desc ? desc.minSpan.cols : 1, cols - p.col);
+    p.rowSpan = clamp(p.rowSpan + d[1], desc ? desc.minSpan.rows : 1, rows - p.row);
+  } else {
+    p.col = clamp(p.col + d[0], 0, cols - p.colSpan);
+    p.row = clamp(p.row + d[1], 0, rows - p.rowSpan);
+  }
+  renderGrid();
+  renderSelected();
+});
 
 load();
 setInterval(refreshStatus, 5000);

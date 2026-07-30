@@ -35,14 +35,21 @@ all: binary
 .PHONY: binary
 binary: $(DIST)/magicmirror-armv6
 
-$(DIST)/magicmirror-armv6: $(shell find . -name '*.go' -not -path './board/*') go.mod
+# Embedded assets are prerequisites too. They are compiled into the binary
+# with go:embed, so a changed ui.html or icon must mark it stale — listing
+# only *.go meant editing the web UI produced a "successful" deploy that
+# shipped the previous build.
+GOFILES   := $(shell find . -name '*.go' -not -path './board/*')
+EMBEDDED  := $(shell find assets internal/web -type f -not -name '*.go' 2>/dev/null)
+
+$(DIST)/magicmirror-armv6: $(GOFILES) $(EMBEDDED) go.mod
 	@mkdir -p $(DIST)
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) \
 		go build -trimpath -ldflags "$(LDFLAGS)" -o $@ ./cmd/magicmirror
 	@echo "built $@ ($(VERSION), $$(du -h $@ | cut -f1))"
 
 .PHONY: host
-host:
+host: $(GOFILES) $(EMBEDDED)
 	@mkdir -p $(DIST)
 	go build -ldflags "-X main.version=$(VERSION)" -o $(DIST)/magicmirror ./cmd/magicmirror
 
