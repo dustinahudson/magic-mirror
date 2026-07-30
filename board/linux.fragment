@@ -18,18 +18,38 @@ CONFIG_LOGO_LINUX_CLUT224=y
 # --- WiFi: BCM43430 over SDIO ---
 CONFIG_CFG80211=y
 CONFIG_MAC80211=y
-CONFIG_BRCMFMAC=y
+
+# brcmfmac is a MODULE, deliberately, and this is load-bearing: the recovery
+# ladder does `rmmod brcmfmac && modprobe brcmfmac` to hard-reset a wedged
+# radio without rebooting the box. Built in, that rung silently becomes a
+# no-op and the ladder skips straight to reboot — which is precisely the v1
+# behaviour this design exists to avoid.
+CONFIG_BRCMFMAC=m
+CONFIG_BRCMUTIL=m
 CONFIG_BRCMFMAC_SDIO=y
 CONFIG_BRCMFMAC_PROTO_BCDC=y
-# Module rather than built-in on purpose: the recovery ladder reloads the
-# driver to hard-reset a wedged radio without rebooting the box, which is
-# only possible if it is a module.
-# (set via BRCMFMAC=m in the defconfig fragment below)
+
+# --- Modules are stored uncompressed ---
+#
+# Buildroot's bundled kmod is built without xz support (-XZ), so its depmod
+# cannot read .ko.xz and silently emits an EMPTY modules.dep. modprobe then
+# refuses to load anything, which would break the driver-reload rung above
+# and, with it, WiFi at boot.
+#
+# After pruning there are five modules totalling well under a megabyte, so
+# compressing them buys nothing worth this failure mode.
+CONFIG_MODULE_COMPRESS_NONE=y
+# CONFIG_MODULE_COMPRESS_XZ is not set
+# CONFIG_MODULE_COMPRESS_GZIP is not set
+# CONFIG_MODULE_COMPRESS_ZSTD is not set
 
 # --- Initramfs linked into the kernel ---
 CONFIG_BLK_DEV_INITRD=y
-CONFIG_INITRAMFS_SOURCE=""
 CONFIG_RD_GZIP=y
+# CONFIG_INITRAMFS_SOURCE is deliberately NOT set here. Buildroot points it
+# at the generated cpio when BR2_TARGET_ROOTFS_INITRAMFS is on, and setting
+# it empty in this fragment overrides that — producing a kernel with no
+# rootfs linked in and a device that panics on boot.
 
 # --- Watchdog ---
 # The BCM2835 hardware watchdog is the floor under everything. The app pets it

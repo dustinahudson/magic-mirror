@@ -9,11 +9,15 @@
 
 set -euo pipefail
 
-# BOARD_DIR is BR2_EXTERNAL_MAGICMIRROR_PATH, which *is* the board/ directory
-# — not the repo root. Everything below is relative to that.
-BOARD_DIR="${1:?post-image.sh needs BR2_EXTERNAL_MAGICMIRROR_PATH}"
+# Buildroot calls post-image scripts as:
+#     post-image.sh <images-dir> <BR2_ROOTFS_POST_SCRIPT_ARGS...>
+# so the images directory is $1 and our own argument follows it.
+#
+# BOARD_DIR is BR2_EXTERNAL_MAGICMIRROR_PATH, which *is* the board/
+# directory — not the repo root. Everything below is relative to that.
+BINARIES_DIR="${1:?post-image.sh expects the images dir as \$1}"
+BOARD_DIR="${2:?post-image.sh expects BR2_EXTERNAL_MAGICMIRROR_PATH as \$2}"
 REPO_ROOT="$(cd "$BOARD_DIR/.." && pwd)"
-BINARIES_DIR="${BINARIES_DIR:-output/images}"
 BOOT_STAGE="$BINARIES_DIR/boot"
 
 echo "post-image: staging boot partition into $BOOT_STAGE"

@@ -17,7 +17,6 @@ BR2_ARM_FPU_VFPV2=y
 # musl over glibc: smaller, and the Go binary is static anyway so only
 # wpa_supplicant, hostapd and dnsmasq actually link it.
 BR2_TOOLCHAIN_BUILDROOT_MUSL=y
-BR2_TOOLCHAIN_BUILDROOT_CXX=y
 BR2_KERNEL_HEADERS_AS_KERNEL=y
 
 # --- Init: BusyBox ---
@@ -44,7 +43,10 @@ BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2708-rpi-zero-w"
 # than a read-only squashfs, which still has to survive a torn write. Costs
 # ~30MB of the 512MB available, which is noise.
 BR2_TARGET_ROOTFS_CPIO=y
-BR2_TARGET_ROOTFS_CPIO_GZIP=y
+# Link the cpio into the kernel image. Without this Buildroot emits
+# rootfs.cpio.gz as a separate file that nothing loads, and the device boots
+# to a kernel panic with no root filesystem.
+BR2_TARGET_ROOTFS_INITRAMFS=y
 BR2_LINUX_KERNEL_CUSTOM_LOGO_PATH=""
 # No separate rootfs image; the cpio is linked into the kernel.
 # BR2_TARGET_ROOTFS_TAR is not set
@@ -81,6 +83,7 @@ BR2_PACKAGE_CA_CERTIFICATES=y
 # app, and all of them cost image size.
 
 # --- Image assembly ---
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/scripts/post-build.sh"
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/overlay"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/scripts/post-image.sh"
 BR2_ROOTFS_POST_SCRIPT_ARGS="$(BR2_EXTERNAL_MAGICMIRROR_PATH)"

@@ -153,12 +153,19 @@ Rough budget:
 
 | | |
 |---|---|
-| Pi boot firmware (`bootcode.bin`, `start.elf`, `fixup.dat`, dtb) | ~7MB |
-| `kernel.img` — zImage + initramfs (busybox, wpa_supplicant, hostapd, dnsmasq, brcm firmware) | ~10MB |
-| `mm.current` — static Go binary, `-ldflags="-s -w"`, fonts + icons embedded | ~9MB |
-| **Total** | **~26MB** |
+| Pi boot firmware (`bootcode.bin`, `start.elf`, `fixup.dat`, dtb) | 3.0MB |
+| `kernel.img` — zImage + initramfs (busybox, wpa_supplicant, hostapd, dnsmasq, brcm firmware) | 11MB |
+| `mm.current` — static Go binary, `-ldflags="-s -w"`, fonts + icons embedded | 9.1MB |
+| **Total** | **23MB** |
 
-**Target: under 30MB, boot to first frame under 12s.**
+These are measured from a completed `make image`, not estimated. Getting
+there needed three fixes the first build exposed: linux-firmware ships 48
+Broadcom blobs where this board needs 3, the bcmrpi defconfig builds ~970
+kernel modules where this board needs 5, and nothing linked against the
+1.7MB of libstdc++ the toolchain was configured to produce. `board/scripts/post-build.sh`
+does the pruning.
+
+**Boot to first frame is still unmeasured** — that needs hardware.
 
 Note this is a few MB worse than the read-only-squashfs layout would have been, since the
 Go binary sits uncompressed on FAT. That is the deliberate price of a migration that's a
