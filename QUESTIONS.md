@@ -180,49 +180,63 @@ with a note in the README** — but this is your network, so your call.
 
 ---
 
-## 6. Status at handoff
+## 6. Status
 
-Milestones 1-9 are implemented; M10 (size and boot-time tuning) is not
-started, and **nothing has been booted on real hardware** — I have no Pi.
-Everything below was verified on the host.
+Everything is implemented and running on hardware. The mirror is up, on the
+network, fetching real weather and calendar data, reachable at
+`magicmirror.local` over SSH and HTTP, and deployable without a card.
 
 | M | What | State |
 |---|---|---|
-| 1 | Buildroot external tree, init, boot files | Written, **unbuilt** — `make image` has never run |
-| 2 | Display backends + live preview | Verified |
-| 3 | Render, layout, glyph cache, registry, clock | Verified |
-| 4 | WiFi recovery ladder | Verified (injected runner) |
-| 5 | Store + sources | Verified against live Open-Meteo |
-| 6 | All widgets | Verified against a live Google Calendar feed |
-| 7 | Config web UI | Verified |
-| 8 | AP provisioning portal | Portal page + captive-portal probes now written; **never exercised on a radio** |
-| 9 | Two-tier update + migrate.sh | Verified (fake release server) |
-| 10 | Size and boot time | Not started |
+| 1 | Buildroot image | Boots. 23MB. |
+| 2 | Display + preview | Working. fbdev detected 1920x1080 32bpp, fast path. |
+| 3 | Render, layout, registry | Working. 61 frames/minute, steady. |
+| 4 | WiFi recovery ladder | Working; reboot rung gated on having ever connected. |
+| 5 | Store + sources | Working. All sources fresh on device. |
+| 6 | Widgets | Working. |
+| 7 | Config web UI | Working, plus /api/logs and /api/status. |
+| 8 | AP setup portal | AP starts, scans, serves the page. Credential save works. |
+| 9 | Update + rollback | Working; dev builds and older tags refused. |
+| 10 | Size / boot time | 23MB. Boot-to-frame still unmeasured. |
 
-### The three things I could not verify
+### Bring-up, and what it cost
 
-1. **`make image` has never been run.** The defconfig, kernel fragment and
-   post-image script are written from knowledge of Buildroot, not from a
-   successful build. Expect to iterate on package names and kernel symbols
-   the first time — that is normal for a new board config, but it means
-   "M1 complete" is not yet true.
-2. **Nothing has booted.** The framebuffer format detection, the SDIO/WiFi
-   assumptions, `bcm2708_fb` inheriting the firmware's HDMI mode, and the
-   ~10s boot estimate are all reasoned rather than observed.
-3. **The AP portal has never run on a radio.** The lifecycle, scan
-   parsing, portal page, captive-portal probe responses and credential
-   writing are all implemented and unit-tested, but hostapd and dnsmasq
-   have never actually been started by this code. Nothing wires the portal
-   into main() yet either — it needs the "no known network after N
-   seconds" trigger.
+Eleven card writes. Every failure was self-inflicted, and every one hid
+behind a symptom several layers away from its cause:
 
-### Smaller gaps
+- `gpu_mem=16` selected the display-less firmware. No HDMI signal at all.
+- The prune deleted `cfg80211`, so `brcmfmac` could not load. Presented as
+  DNS failures, a reboot loop, and a portal that could not bind.
+- My `inittab` dropped every filesystem mount. `/sys` missing meant every
+  interface check failed while the radio was up and running firmware.
+- No RTC and no NTP, so the clock sat at 1970 and every TLS handshake
+  failed certificate validation. netmon reported the link healthy
+  throughout, correctly — its probe is raw TCP with no certificate.
+- FAT corruption truncated `kernel.img` to zero bytes. `cp` succeeded and
+  `ls` showed 11MB, because both read the page cache rather than flash.
+- Three separate SSH bugs stacked: a host key on FAT that could not hold
+  `0600`, lazy key generation that only failed on connect, and
+  `/etc/dropbear` being a dangling symlink that made `mkdir -p` a silent
+  no-op.
 
-- `scripts/release.sh` still builds v1 artifacts and needs rewriting for the
-  two-tier asset layout (`magicmirror-armv6`, `kernel.img`, `SHA256SUMS`).
-- The OS-tier boot-counter rollback in the initramfs `/init` (DESIGN.md
-  describes it) is not implemented — `internal/update` keeps
-  `kernel.prev.img`, but nothing yet restores it automatically after a
-  failed boot.
-- No golden-PNG layout tests, though the PNG backend that would drive them
-  exists.
+The pattern worth keeping: **replacing something Buildroot provides means
+inheriting responsibility for everything it did.** The inittab, the
+dropbear init script and the module set all broke this way.
+
+The other lesson is about diagnostics. Progress was gated on what the
+device could say, not on how hard the bugs were. `/api/logs` should have
+existed before any of the features that needed debugging — it resolved the
+last two failures in one cycle each.
+
+### Still open
+
+- **Boot-to-first-frame is unmeasured.** Needs a stopwatch, not a tool.
+- **The AP portal has not been driven to completion by a phone.** The AP
+  comes up, scans, and serves the page; nobody has selected a network on it
+  and watched the mirror reconnect.
+- **OS-tier rollback is untested.** `kernel.prev.img` is kept, but nothing
+  restores it automatically after a failed boot; the initramfs boot-counter
+  described in DESIGN.md is not implemented.
+- **No golden-PNG layout tests**, though the PNG backend exists.
+- **The layout pass has not started.** This was the original next step and
+  is still where the interesting work is.
