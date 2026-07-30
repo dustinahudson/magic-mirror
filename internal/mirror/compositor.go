@@ -24,6 +24,13 @@ type Placement struct {
 	Widget widget.Widget
 }
 
+// Address label geometry. Small enough to read only when looked for, inset
+// far enough from the edge to survive a panel that overscans.
+const (
+	addressTextSize = 15
+	addressPad      = 10
+)
+
 // Compositor draws placements into a frame, redrawing only what changed.
 //
 // A full 1920x1080 repaint is 2 million pixels; on an ARMv6 core that is the
@@ -42,6 +49,11 @@ type Compositor struct {
 	overlay     widget.Widget
 	overlayKey  string
 	overlayLive bool
+
+	// address is the web address to print in the corner, resolved per frame.
+	address     func() string
+	addressKey  string
+	addressRect image.Rectangle
 }
 
 // NewCompositor returns a compositor drawing into bounds.
@@ -100,6 +112,51 @@ func (c *Compositor) Invalidate() { c.forceFull = true }
 func (c *Compositor) SetOverlay(w widget.Widget) {
 	c.overlay = w
 	c.forceFull = true
+}
+
+// SetAddress installs a function returning the address to print in the
+// corner of every frame, or "" to print nothing.
+//
+// This is a property of the compositor rather than a widget, and that is the
+// whole point. The address is how someone reaches the settings page, and the
+// settings page is the only way to add a widget — so a mirror whose address
+// depends on a widget being present can be configured into a state where
+// nobody can configure it. It has to survive an empty layout.
+func (c *Compositor) SetAddress(fn func() string) {
+	c.address = fn
+	c.forceFull = true
+}
+
+// drawAddress prints the address in the bottom-right corner and returns the
+// rectangle it occupies, or the empty rectangle when there is nothing to
+// print.
+//
+// Deliberately faint and small: this is a label on the hardware, not
+// something to read from across the room. It is there for the moment someone
+// needs it and would otherwise have to find the router's client list.
+func (c *Compositor) drawAddress(ctx widget.Context) image.Rectangle {
+	if c.address == nil {
+		return image.Rectangle{}
+	}
+	addr := c.address()
+	if addr == "" {
+		return image.Rectangle{}
+	}
+	face, err := ctx.Fonts.Face(render.Regular, addressTextSize)
+	if err != nil {
+		return image.Rectangle{}
+	}
+
+	b := c.frame.Bounds()
+	w, h := face.Measure(addr), face.Height()
+	r := image.Rect(b.Max.X-addressPad-w, b.Max.Y-addressPad-h, b.Max.X-addressPad, b.Max.Y-addressPad)
+	if r.Min.X < b.Min.X || r.Min.Y < b.Min.Y {
+		return image.Rectangle{}
+	}
+
+	render.Fill(c.frame, r, render.Background)
+	face.DrawTop(c.frame, r.Min.X, r.Min.Y, addr, render.Faint)
+	return r
 }
 
 // Draw updates the frame and returns the rectangles that changed.
@@ -180,6 +237,34 @@ func (c *Compositor) Draw(ctx widget.Context) []image.Rectangle {
 
 		if !full {
 			dirty = append(dirty, bounds)
+		}
+	}
+
+	// The address is drawn after the tiles, so it sits on top of whatever
+	// occupies that corner rather than being erased by it.
+	if c.address != nil {
+		addr := c.address()
+		overlapped := false
+		for _, d := range dirty {
+			if d.Overlaps(c.addressRect) {
+				overlapped = true
+				break
+			}
+		}
+		// Redraw when the text changed, when a tile underneath repainted
+		// over it, or on a full repaint. Otherwise it stays put and costs
+		// nothing — the point of dirty-rect tracking is that a static
+		// corner label does not force a present every second.
+		if full || addr != c.addressKey || overlapped {
+			if r := c.drawAddress(ctx); !r.Empty() {
+				if !full && (!r.Eq(c.addressRect) || !overlapped) {
+					dirty = append(dirty, r)
+				}
+				c.addressRect = r
+			} else {
+				c.addressRect = image.Rectangle{}
+			}
+			c.addressKey = addr
 		}
 	}
 
