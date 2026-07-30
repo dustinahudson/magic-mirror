@@ -9,7 +9,10 @@
 
 set -euo pipefail
 
+# BOARD_DIR is BR2_EXTERNAL_MAGICMIRROR_PATH, which *is* the board/ directory
+# — not the repo root. Everything below is relative to that.
 BOARD_DIR="${1:?post-image.sh needs BR2_EXTERNAL_MAGICMIRROR_PATH}"
+REPO_ROOT="$(cd "$BOARD_DIR/.." && pwd)"
 BINARIES_DIR="${BINARIES_DIR:-output/images}"
 BOOT_STAGE="$BINARIES_DIR/boot"
 
@@ -43,15 +46,15 @@ for dtb in "$BINARIES_DIR"/bcm2708-rpi-zero-w.dtb "$BINARIES_DIR"/*.dtb; do
 done
 
 # --- Firmware config ---
-cp "$BOARD_DIR/board/boot/config.txt" "$BOOT_STAGE/"
-cp "$BOARD_DIR/board/boot/cmdline.txt" "$BOOT_STAGE/"
+cp "$BOARD_DIR/boot/config.txt" "$BOOT_STAGE/"
+cp "$BOARD_DIR/boot/cmdline.txt" "$BOOT_STAGE/"
 
 # --- Application binary ---
 # Built outside Buildroot (see the top-level Makefile) because it is not part
 # of the rootfs: keeping the app on FAT is what lets an app update ship
 # without rebuilding a kernel.
-if [ -f "$BOARD_DIR/dist/magicmirror-armv6" ]; then
-  cp "$BOARD_DIR/dist/magicmirror-armv6" "$BOOT_STAGE/mm.current"
+if [ -f "$REPO_ROOT/dist/magicmirror-armv6" ]; then
+  cp "$REPO_ROOT/dist/magicmirror-armv6" "$BOOT_STAGE/mm.current"
   chmod +x "$BOOT_STAGE/mm.current"
 else
   echo "post-image: WARNING no dist/magicmirror-armv6; run 'make binary' first" >&2
