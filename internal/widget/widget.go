@@ -214,9 +214,54 @@ func Build(typ string, raw json.RawMessage) Widget {
 	if !ok {
 		return &Unknown{Type: typ, Reason: "unknown widget type"}
 	}
-	w, err := d.New(raw)
+	w, err := d.New(withDefaults(d, raw))
 	if err != nil {
 		return &Unknown{Type: typ, Reason: err.Error()}
 	}
 	return w
+}
+
+// withDefaults fills in field defaults for keys the stored config omits.
+//
+// The web UI shows a field's default in the form but only records a value
+// once the field is edited, so a panel added and left alone arrives here as
+// "{}". Applying defaults centrally rather than in each New keeps one list of
+// them: the descriptor drives the form, validation and construction alike, so
+// what the settings page displays is necessarily what renders.
+//
+// A key present but empty is left alone — clearing a field is a choice, not
+// an omission.
+func withDefaults(d Descriptor, raw json.RawMessage) json.RawMessage {
+	fields := make(map[string]json.RawMessage, len(d.Fields))
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			// Not an object. Hand it back untouched and let New report it.
+			return raw
+		}
+	}
+
+	filled := false
+	for _, f := range d.Fields {
+		if f.Default == nil {
+			continue
+		}
+		if _, ok := fields[f.Key]; ok {
+			continue
+		}
+		b, err := json.Marshal(f.Default)
+		if err != nil {
+			continue
+		}
+		fields[f.Key] = b
+		filled = true
+	}
+	if !filled {
+		return raw
+	}
+
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return out
 }
