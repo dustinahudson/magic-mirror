@@ -25,6 +25,13 @@ var (
 	OK    = color.RGBA{82, 250, 127, 255}
 	Warn  = color.RGBA{250, 190, 82, 255}
 	Error = color.RGBA{250, 82, 88, 255}
+
+	// Today's cell in the calendar, carried over from v1
+	// (calendar_widget.cpp:240-244). A filled cell with light blue numerals
+	// rather than a white disc: the disc reads as a selection control, and
+	// this sits back into the mirror the way the rest of the palette does.
+	CalendarToday   = color.RGBA{100, 200, 255, 255}
+	CalendarTodayBG = color.RGBA{50, 50, 55, 255}
 )
 
 // RGBA aliases color.RGBA so widget code can name palette values without

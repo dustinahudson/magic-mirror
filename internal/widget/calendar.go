@@ -240,7 +240,7 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 
 		face, fg := dayFace, render.Secondary
 		if isToday {
-			face, fg = todayFace, render.Background
+			face, fg = todayFace, render.CalendarToday
 		}
 
 		// Label the first of a month, so a rolling window that crosses into
@@ -253,11 +253,17 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 		lw := face.Measure(label)
 		textY := cy + (rowH-dotBand-face.Height())/2
 
+		// Today is a filled cell with light blue numerals, which is what v1
+		// did (calendar_widget.cpp:240): bg rgb(50,50,55), text
+		// rgb(100,200,255). A white disc with knocked-out text reads as a
+		// selection control rather than a date, and on a mirror the softer
+		// fill sits back where it belongs.
 		if isToday {
-			r := min(colW, rowH-dotBand)/2 - 2
-			if r > 0 {
-				render.FillCircle(dst, cx, textY+face.Height()/2, r, render.Primary)
-			}
+			cell := image.Rect(
+				bounds.Min.X+col*colW, cy,
+				bounds.Min.X+(col+1)*colW, min(cy+rowH, bounds.Max.Y),
+			)
+			render.Fill(dst, cell.Inset(2), render.CalendarTodayBG)
 		}
 		face.DrawTop(dst, cx-lw/2, textY, label, fg)
 
