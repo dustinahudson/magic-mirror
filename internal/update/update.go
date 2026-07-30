@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,6 +51,88 @@ const (
 	AssetOS        = "kernel.img"
 	AssetChecksums = "SHA256SUMS"
 )
+
+// ShouldInstall reports whether release tag is a genuine upgrade from the
+// running version.
+//
+// v1 asked only whether the tag *differed* (update_service.cpp:283), which
+// is wrong in a way that showed up immediately on hardware: a development
+// build reported itself as "v0.14.0-21-gd1c3a8f-dirty", the newest published
+// release was the old bare-metal v0.14.0, the strings differed, and the
+// updater cheerfully set about installing a Circle OS kernel onto a Linux
+// device. Only the checksum requirement stopped it.
+//
+// Two rules:
+//
+//   - A development build never updates. If the running version is not a
+//     clean release tag, someone is iterating on this device and having it
+//     replace itself underneath them is never what they want.
+//   - Only a strictly newer version installs. Not different — newer.
+func ShouldInstall(current, tag string) bool {
+	if IsDevBuild(current) {
+		return false
+	}
+	cur, ok := parseVersion(current)
+	if !ok {
+		return false
+	}
+	next, ok := parseVersion(tag)
+	if !ok {
+		return false
+	}
+	return compareVersion(next, cur) > 0
+}
+
+// IsDevBuild reports whether a version string came from `git describe`
+// rather than a clean tag — either dirty, or some commits past a tag.
+func IsDevBuild(v string) bool {
+	if v == "" || v == "dev" {
+		return true
+	}
+	if strings.HasSuffix(v, "-dirty") {
+		return true
+	}
+	// "v0.14.0-21-gd1c3a8f" — a tag, a commit count, and a hash.
+	parts := strings.Split(v, "-")
+	if len(parts) >= 3 && strings.HasPrefix(parts[len(parts)-1], "g") {
+		return true
+	}
+	return false
+}
+
+// parseVersion reads a "vMAJOR.MINOR.PATCH" tag.
+func parseVersion(v string) ([3]int, bool) {
+	var out [3]int
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	// Ignore any pre-release suffix for ordering purposes.
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+func compareVersion(a, b [3]int) int {
+	for i := range 3 {
+		switch {
+		case a[i] > b[i]:
+			return 1
+		case a[i] < b[i]:
+			return -1
+		}
+	}
+	return 0
+}
 
 // Release is a GitHub release.
 type Release struct {
@@ -142,8 +225,8 @@ func (u *Updater) CheckAndInstall(ctx context.Context) error {
 		return err
 	}
 
-	if rel.Tag == u.opts.Version {
-		u.log.Debug("already up to date", "version", u.opts.Version)
+	if !ShouldInstall(u.opts.Version, rel.Tag) {
+		u.log.Debug("no update needed", "current", u.opts.Version, "latest", rel.Tag)
 		return nil
 	}
 	u.log.Info("update available", "current", u.opts.Version, "latest", rel.Tag)

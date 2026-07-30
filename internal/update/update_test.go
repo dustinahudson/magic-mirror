@@ -209,3 +209,57 @@ func TestOSTierKeepsPreviousKernel(t *testing.T) {
 		t.Errorf("kernel.prev.img = %q, want the outgoing kernel", prev)
 	}
 }
+
+// Regression test for a hazard seen on real hardware.
+//
+// A device running "v0.14.0-21-gd1c3a8f-dirty" saw the newest published
+// release — the old bare-metal v0.14.0 — decided it was an upgrade because
+// the strings differed, and set about installing a Circle OS kernel onto a
+// Linux device. Only the missing SHA256SUMS asset stopped it.
+func TestShouldInstall(t *testing.T) {
+	cases := []struct {
+		current, tag string
+		want         bool
+		why          string
+	}{
+		// The case that actually happened.
+		{"v0.14.0-21-gd1c3a8f-dirty", "v0.14.0", false, "dev build must never update"},
+
+		{"v1.0.0", "v1.0.1", true, "patch bump is an upgrade"},
+		{"v1.0.0", "v1.1.0", true, "minor bump is an upgrade"},
+		{"v1.0.0", "v2.0.0", true, "major bump is an upgrade"},
+
+		{"v1.0.0", "v1.0.0", false, "same version is not an upgrade"},
+		{"v1.2.0", "v1.1.9", false, "older version must never install"},
+		{"v2.0.0", "v0.14.0", false, "much older version must never install"},
+
+		{"dev", "v1.0.0", false, "unversioned build must not update"},
+		{"", "v1.0.0", false, "empty version must not update"},
+		{"v1.0.0", "not-a-version", false, "unparseable tag must not install"},
+
+		{"v1.0.0-3-gabc1234", "v1.1.0", false, "commits past a tag is still a dev build"},
+	}
+
+	for _, c := range cases {
+		if got := ShouldInstall(c.current, c.tag); got != c.want {
+			t.Errorf("ShouldInstall(%q, %q) = %v, want %v — %s",
+				c.current, c.tag, got, c.want, c.why)
+		}
+	}
+}
+
+func TestIsDevBuild(t *testing.T) {
+	dev := []string{"", "dev", "v1.0.0-dirty", "v0.14.0-21-gd1c3a8f", "v0.14.0-21-gd1c3a8f-dirty"}
+	rel := []string{"v1.0.0", "v0.14.0", "v2.13.4", "v1.0.0-rc1"}
+
+	for _, v := range dev {
+		if !IsDevBuild(v) {
+			t.Errorf("IsDevBuild(%q) = false, want true", v)
+		}
+	}
+	for _, v := range rel {
+		if IsDevBuild(v) {
+			t.Errorf("IsDevBuild(%q) = true, want false", v)
+		}
+	}
+}
