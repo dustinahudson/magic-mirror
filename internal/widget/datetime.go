@@ -167,20 +167,23 @@ func (w *DateTime) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 
 	end := timeFace.DrawTop(dst, x, y, clock, render.Primary)
 
-	// Seconds ride the top of the digits, am/pm the baseline — the offset
-	// arithmetic v1 did with LV_ALIGN_OUT_RIGHT_TOP / _BOTTOM.
+	// Seconds ride the top of the digits, am/pm sits on their baseline —
+	// what v1 expressed as LV_ALIGN_OUT_RIGHT_TOP and _RIGHT_BOTTOM.
+	//
+	// Baseline rather than bottom-of-box for the am/pm: the two faces have
+	// different descents, so matching boxes would leave "pm" sitting
+	// slightly low against the digits. Face.Draw takes a baseline directly,
+	// which makes the alignment explicit instead of arithmetic on ascents.
 	if secs != "" || ampm != "" {
 		gap := max(4, size/16)
-		top := y + timeFace.Ascent() - subFace.Ascent() - (timeFace.Ascent()-subFace.Ascent())/2
+		x := end + gap
+		baseline := y + timeFace.Ascent()
+
 		if secs != "" {
-			subFace.DrawTop(dst, end+gap, top, secs, render.Primary)
+			subFace.DrawTop(dst, x, y, secs, render.Primary)
 		}
 		if ampm != "" {
-			base := y + timeFace.Ascent() - subFace.Ascent()
-			if secs != "" {
-				base = top + subFace.Height()
-			}
-			subFace.DrawTop(dst, end+gap, base, ampm, render.Secondary)
+			subFace.Draw(dst, x, baseline, ampm, render.Secondary)
 		}
 	}
 }
