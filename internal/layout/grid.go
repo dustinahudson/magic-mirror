@@ -13,7 +13,11 @@ const (
 	DefaultCols    = 12
 	DefaultRows    = 16
 	DefaultPadding = 20
-	DefaultGap     = 5
+
+	// v1 used 5px. That was tight enough that adjacent tiles read as one
+	// block, and it left the inter-widget rules almost touching the content
+	// above them. 12 separates without wasting a grid cell's worth of space.
+	DefaultGap = 12
 )
 
 // Span is a widget's size in grid cells.
