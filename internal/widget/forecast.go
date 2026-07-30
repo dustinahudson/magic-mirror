@@ -197,13 +197,27 @@ func (w *Forecast) renderVertical(dst *image.RGBA, bounds image.Rectangle, ctx C
 	if n == 0 {
 		return
 	}
+	// Drop rows that will not fit rather than drawing past the tile. An
+	// earlier version divided the height by the requested day count
+	// regardless, so a five-day forecast in a short tile painted its last
+	// row below the boundary and over whatever was beneath.
 	rowH := bounds.Dy() / n
-	size := clampInt(rowH/2, 12, 34)
+	const minRow = 18
+	if rowH < minRow {
+		n = max(1, bounds.Dy()/minRow)
+		days = days[:min(len(days), n)]
+		rowH = bounds.Dy() / n
+	}
 
-	face, err := ctx.Fonts.Face(render.Regular, size)
+	// The day column and the temperatures both have to fit alongside the
+	// icon, so size from the widest thing actually drawn.
+	widest := "Tomorrow  88° / 64°"
+	face, err := ctx.Fonts.FitFace(render.Regular, clampInt(rowH/2, 12, 34),
+		widest, bounds.Dx(), rowH)
 	if err != nil {
 		return
 	}
+	size := face.Size()
 
 	// v1 fixed the day column at 120px so "Tomorrow" fit at 22pt. Measuring
 	// the widest label we will actually draw does the same job at any size,
@@ -214,7 +228,7 @@ func (w *Forecast) renderVertical(dst *image.RGBA, bounds image.Rectangle, ctx C
 
 	for i, d := range days {
 		y := bounds.Min.Y + i*rowH
-		if y+rowH > bounds.Max.Y+rowH/2 {
+		if y+rowH > bounds.Max.Y {
 			break
 		}
 		mid := y + (rowH-face.Height())/2

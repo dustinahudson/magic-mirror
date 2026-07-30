@@ -41,6 +41,15 @@ func init() {
 
 func f64(v float64) *float64 { return new(v) }
 
+// maxString returns whichever of a or b is longer, for use as a width
+// sample when either might be the wider of the two.
+func maxString(a, b string) string {
+	if len(b) > len(a) {
+		return b
+	}
+	return a
+}
+
 type dateTimeConfig struct {
 	Format24h   bool   `json:"format24h"`
 	ShowSeconds bool   `json:"showSeconds"`
@@ -107,14 +116,39 @@ func (w *DateTime) Key(ctx Context) string {
 func (w *DateTime) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 	date, clock, secs, ampm := w.parts(ctx)
 
-	size := w.cfg.TimeSize
-	timeFace, err := ctx.Fonts.Face(render.Light, size)
+	// Fit the clock to the tile rather than trusting the configured size.
+	//
+	// timeSize is a preference: a 96px clock in a tile two rows tall has to
+	// give way, and clipping the digits is the worst possible resolution.
+	// The date line and the seconds/am-pm column both take space from the
+	// clock, so they are budgeted for before the fit.
+	avail := bounds
+	dateH := 0
+	if date != "" {
+		// The date gets at most a quarter of the tile.
+		if f, err := ctx.Fonts.FitFace(render.Regular,
+			max(12, w.cfg.TimeSize/3), date, bounds.Dx(), bounds.Dy()/4); err == nil {
+			dateH = f.Height() + f.Size()/4
+		}
+	}
+	avail.Min.Y += dateH
+
+	// Reserve room for the seconds/am-pm column beside the digits.
+	sample := clock
+	if secs != "" || ampm != "" {
+		sample = clock + "  " + maxString(secs, ampm)
+	}
+
+	timeFace, err := ctx.Fonts.FitFace(render.Light, w.cfg.TimeSize,
+		sample, avail.Dx(), avail.Dy())
 	if err != nil {
 		return
 	}
+	size := timeFace.Size()
+
 	// The satellites sit at roughly a third of the clock height, matching the
 	// 48/24 ratio v1 used.
-	subSize := max(12, size/3)
+	subSize := max(10, size/3)
 	subFace, err := ctx.Fonts.Face(render.Regular, subSize)
 	if err != nil {
 		return
@@ -123,8 +157,12 @@ func (w *DateTime) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 	x, y := bounds.Min.X, bounds.Min.Y
 
 	if date != "" {
-		subFace.DrawTop(dst, x, y, subFace.Truncate(date, bounds.Dx()), render.Secondary)
-		y += subFace.Height() + subSize/4
+		dateFace, err := ctx.Fonts.FitFace(render.Regular,
+			max(12, w.cfg.TimeSize/3), date, bounds.Dx(), bounds.Dy()/4)
+		if err == nil {
+			dateFace.DrawTop(dst, x, y, dateFace.Truncate(date, bounds.Dx()), render.Secondary)
+			y += dateFace.Height() + dateFace.Size()/4
+		}
 	}
 
 	end := timeFace.DrawTop(dst, x, y, clock, render.Primary)

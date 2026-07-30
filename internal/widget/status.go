@@ -143,7 +143,9 @@ func (w *Status) Key(ctx Context) string {
 }
 
 func (w *Status) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
-	face, err := ctx.Fonts.Face(render.Light, w.cfg.Size)
+	// The status bar is usually a single grid row, and a configured size
+	// larger than that row would simply be clipped by the screen edge.
+	face, err := ctx.Fonts.FitFace(render.Light, w.cfg.Size, "", 0, bounds.Dy())
 	if err != nil {
 		return
 	}

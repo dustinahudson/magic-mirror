@@ -101,6 +101,58 @@ func (fs *FontSet) Face(w Weight, sizePx int) (*Face, error) {
 	return f, nil
 }
 
+// FitFace returns the largest face at or below maxSize whose rendering of
+// sample fits inside maxW by maxH.
+//
+// Widget tiles are sized by the user in grid cells, and a configured font
+// size is a preference rather than a promise — a clock at 96px in a tile
+// two rows tall has to give. Every size the search visits is cached in the
+// FontSet, so repeated calls at a stable tile size cost one map lookup.
+//
+// Pass maxW or maxH as 0 to leave that dimension unconstrained.
+func (fs *FontSet) FitFace(w Weight, maxSize int, sample string, maxW, maxH int) (*Face, error) {
+	const minSize = 8
+	if maxSize < minSize {
+		maxSize = minSize
+	}
+
+	fits := func(size int) (bool, error) {
+		f, err := fs.Face(w, size)
+		if err != nil {
+			return false, err
+		}
+		if maxH > 0 && f.Height() > maxH {
+			return false, nil
+		}
+		if maxW > 0 && sample != "" && f.Measure(sample) > maxW {
+			return false, nil
+		}
+		return true, nil
+	}
+
+	// The preferred size usually fits; check it before searching.
+	if ok, err := fits(maxSize); err != nil {
+		return nil, err
+	} else if ok {
+		return fs.Face(w, maxSize)
+	}
+
+	lo, hi := minSize, maxSize
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		ok, err := fits(mid)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return fs.Face(w, lo)
+}
+
 // MustFace is Face with the error promoted to a panic. Only for sizes fixed
 // at compile time, where a failure is a build problem rather than a runtime
 // one.
