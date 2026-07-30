@@ -48,18 +48,22 @@ func init() {
 					{Value: "monday", Label: "Monday"},
 				},
 			},
-			{Key: "showDots", Label: "Mark days with events", Type: FieldBool, Default: true},
+			{
+				Key: "showEvents", Label: "Show events in day cells", Type: FieldBool,
+				Default: true,
+				Help:    "Off shows only a colour dot per calendar, for a short tile.",
+			},
 		},
 		New: newCalendar,
 	})
 }
 
 type calendarConfig struct {
-	Mode      string   `json:"mode"`
-	Weeks     int      `json:"weeks"`
-	Feeds     []string `json:"feeds"`
-	WeekStart string   `json:"weekStart"`
-	ShowDots  bool     `json:"showDots"`
+	Mode       string   `json:"mode"`
+	Weeks      int      `json:"weeks"`
+	Feeds      []string `json:"feeds"`
+	WeekStart  string   `json:"weekStart"`
+	ShowEvents bool     `json:"showEvents"`
 }
 
 // Calendar renders a date grid.
@@ -73,7 +77,7 @@ type Calendar struct {
 }
 
 func newCalendar(raw json.RawMessage) (Widget, error) {
-	cfg := calendarConfig{Mode: "rolling", Weeks: 4, WeekStart: "sunday", ShowDots: true}
+	cfg := calendarConfig{Mode: "rolling", Weeks: 4, WeekStart: "sunday", ShowEvents: true}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return nil, err
@@ -160,11 +164,17 @@ func (w *Calendar) Key(ctx Context) string {
 	fmt.Fprintf(&b, "cal|%s|%d|%s|%v|today=%s",
 		start.Format("2006-01-02"), rows, st.Key(), ok, now.Format("2006-01-02"))
 
-	// Only which days are marked affects the drawing, not the events.
+	// Titles are drawn now, not just counts, so the key has to include them
+	// or an edited event would never repaint.
 	for i := range rows * 7 {
 		key := start.AddDate(0, 0, i).Format("2006-01-02")
-		if n := len(byDay[key]); n > 0 {
-			fmt.Fprintf(&b, "|%d:%d", i, n)
+		evs := byDay[key]
+		if len(evs) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "|%d:", i)
+		for _, e := range evs {
+			fmt.Fprintf(&b, "%s@%s;", e.Summary, e.Start.Format("1504"))
 		}
 	}
 	return b.String()
@@ -210,12 +220,6 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 	todayFace, err := ctx.Fonts.Face(render.SemiBold, cellSize)
 	if err != nil {
 		return
-	}
-
-	const dotRadius = 2
-	dotBand := 0
-	if w.cfg.ShowDots {
-		dotBand = dotRadius*2 + 3
 	}
 
 	// v1 used pad_all(6) inside each cell; scaled here so it holds up at
@@ -273,18 +277,106 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 		textY := cy + pad
 		face.DrawTop(dst, textX, textY, label, fg)
 
-		if dotBand > 0 && len(byDay[key]) > 0 {
-			dotY := textY + face.Height() + dotRadius
-			if dotY+dotRadius <= bounds.Max.Y {
-				w.drawDots(dst, byDay[key], textX+dotRadius, dotY, dotRadius)
-			}
+		if len(byDay[key]) > 0 && w.cfg.ShowEvents {
+			evArea := image.Rect(
+				cell.Min.X+pad, textY+face.Height()+2,
+				cell.Max.X-pad, min(cy+rowH-2, bounds.Max.Y),
+			)
+			w.drawEvents(dst, byDay[key], evArea, ctx)
+		} else if len(byDay[key]) > 0 {
+			w.drawDots(dst, byDay[key], textX, textY+face.Height()+2, 2)
 		}
 	}
 }
 
-// drawDots marks a day with one dot per calendar that has an event, in that
-// calendar's colour, capped so a busy day stays legible.
-func (w *Calendar) drawDots(dst *image.RGBA, events []ics.Event, cx, y, r int) {
+// drawEvents stacks event chips under the date, as v1 did.
+//
+// Two forms, both carried over from v1 (calendar_widget.cpp:420-470):
+//
+//   - All-day events are a filled block in the calendar's colour, with the
+//     text knocked out in black or white depending on how light that colour
+//     is. They read as spanning the day, which is what they do.
+//   - Timed events are a small colour square followed by the time and title
+//     on a transparent background, so a day of meetings stays legible
+//     rather than becoming a wall of colour.
+//
+// Whatever does not fit becomes a "+2 more" line. Silently dropping events
+// would make a busy day indistinguishable from a quiet one.
+func (w *Calendar) drawEvents(dst *image.RGBA, events []ics.Event, area image.Rectangle, ctx Context) {
+	if area.Dy() < 8 || area.Dx() < 20 {
+		return
+	}
+
+	size := clampInt(area.Dy()/4, 9, 18)
+	face, err := ctx.Fonts.Face(render.Regular, size)
+	if err != nil {
+		return
+	}
+
+	lineH := face.Height() + 2
+	room := area.Dy() / lineH
+	if room < 1 {
+		// Not even one chip fits; fall back to colour dots so the day is
+		// still marked as busy.
+		w.drawDots(dst, events, area.Min.X, area.Min.Y, 2)
+		return
+	}
+
+	shown := events
+	overflow := 0
+	if len(events) > room {
+		// Reserve the last line for the count when it would not all fit.
+		shown = events[:max(0, room-1)]
+		overflow = len(events) - len(shown)
+	}
+
+	y := area.Min.Y
+	for _, e := range shown {
+		c, ok := render.ParseHexColor(e.Color)
+		if !ok {
+			c = render.Secondary
+		}
+
+		if e.AllDay {
+			chip := image.Rect(area.Min.X, y, area.Max.X, y+face.Height()+1)
+			render.FillRounded(dst, chip, 3, c)
+			face.DrawTop(dst, chip.Min.X+3, y,
+				face.Truncate(e.Summary, chip.Dx()-6), contrastOn(c))
+		} else {
+			sq := face.Height() * 2 / 3
+			render.FillRounded(dst, image.Rect(area.Min.X, y+(face.Height()-sq)/2,
+				area.Min.X+sq, y+(face.Height()-sq)/2+sq), 2, c)
+
+			text := strings.ToLower(e.Start.In(ctx.Location()).Format("3:04pm")) + " " + e.Summary
+			text = strings.Replace(text, ":00", "", 1)
+			face.DrawTop(dst, area.Min.X+sq+4, y,
+				face.Truncate(text, area.Dx()-sq-4), render.Secondary)
+		}
+		y += lineH
+	}
+
+	if overflow > 0 && y+face.Height() <= area.Max.Y {
+		face.DrawTop(dst, area.Min.X, y,
+			fmt.Sprintf("+%d more", overflow), render.Muted)
+	}
+}
+
+// contrastOn returns black or white, whichever is readable on c.
+//
+// Perceptual luminance rather than a plain average: a saturated green is far
+// lighter to the eye than a saturated blue at the same numeric value, and
+// averaging puts white text on both.
+func contrastOn(c render.RGBA) render.RGBA {
+	lum := (299*int(c.R) + 587*int(c.G) + 114*int(c.B)) / 1000
+	if lum > 140 {
+		return render.Background
+	}
+	return render.Primary
+}
+
+// drawDots is the fallback for cells too short for chips: one dot per
+// calendar with an event that day.
+func (w *Calendar) drawDots(dst *image.RGBA, events []ics.Event, x, y, r int) {
 	seen := map[string]bool{}
 	var colors []render.RGBA
 	for _, e := range events {
@@ -297,18 +389,14 @@ func (w *Calendar) drawDots(dst *image.RGBA, events []ics.Event, cx, y, r int) {
 			c = render.Secondary
 		}
 		colors = append(colors, c)
-		if len(colors) == 3 {
+		if len(colors) == 4 {
 			break
 		}
 	}
-	if len(colors) == 0 {
-		return
-	}
 
 	gap := r*2 + 3
-	x := cx - (len(colors)*gap-3)/2 + r
 	for _, c := range colors {
-		render.FillCircle(dst, x, y, r, c)
+		render.FillCircle(dst, x+r, y+r, r, c)
 		x += gap
 	}
 }

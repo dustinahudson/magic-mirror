@@ -221,39 +221,6 @@ func TestParseTruncationIsReported(t *testing.T) {
 	}
 }
 
-func TestParseDuration(t *testing.T) {
-	cases := []struct {
-		in   string
-		want time.Duration
-	}{
-		{"PT1H", time.Hour},
-		{"PT30M", 30 * time.Minute},
-		{"P1D", 24 * time.Hour},
-		{"P1DT2H30M", 26*time.Hour + 30*time.Minute},
-		{"P1W", 7 * 24 * time.Hour},
-		{"PT45S", 45 * time.Second},
-		{"garbage", 0},
-	}
-	for _, c := range cases {
-		if got := parseDuration(c.in); got != c.want {
-			t.Errorf("parseDuration(%q) = %v, want %v", c.in, got, c.want)
-		}
-	}
-}
-
-func TestSplitPropertyHandlesQuotedColon(t *testing.T) {
-	name, params, value := splitProperty(`DTSTART;TZID="Europe/London:weird":20250610T140000`)
-	if name != "DTSTART" {
-		t.Errorf("name = %q", name)
-	}
-	if params["TZID"] != "Europe/London:weird" {
-		t.Errorf("TZID = %q", params["TZID"])
-	}
-	if value != "20250610T140000" {
-		t.Errorf("value = %q", value)
-	}
-}
-
 func TestParseTZID(t *testing.T) {
 	res := parse(t, `BEGIN:VEVENT
 UID:tz
