@@ -34,6 +34,8 @@ type Conditions struct {
 	// Forecast rides along with current conditions because Open-Meteo
 	// returns both from one request — one round trip instead of the two v1
 	// made.
+	//
+	// Index 0 is today, with today's real high and low.
 	Forecast []ForecastDay `json:"forecast"`
 }
 
@@ -171,9 +173,15 @@ func (w *WeatherSource) Fetch(ctx context.Context) (any, error) {
 		out.Sunset, _ = time.ParseInLocation("2006-01-02T15:04", resp.Daily.Sunset[0], zone)
 	}
 
-	// Skip today: the forecast row is about days ahead, and today is
-	// already covered by current conditions.
-	for i := 1; i < len(resp.Daily.Time); i++ {
+	// Today is index 0 and is kept.
+	//
+	// It was previously dropped, on the grounds that current conditions
+	// already cover today — but v1's forecast opened with a "Today" row, and
+	// reconstructing one from the current temperature meant printing
+	// "82° / 82°", which looks like a real range and is not. Open-Meteo
+	// returns today's actual high and low; consumers that want only the days
+	// ahead can skip the first entry.
+	for i := 0; i < len(resp.Daily.Time); i++ {
 		if i >= len(resp.Daily.Code) || i >= len(resp.Daily.Max) || i >= len(resp.Daily.Min) {
 			break
 		}

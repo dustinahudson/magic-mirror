@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"strings"
+	"time"
 
 	"github.com/dustinahudson/magic-mirror/internal/layout"
 	"github.com/dustinahudson/magic-mirror/internal/render"
@@ -17,21 +18,35 @@ func init() {
 		Type:        "forecast",
 		Name:        "Forecast",
 		Description: "Multi-day outlook with icons and high/low temperatures.",
-		DefaultSpan: layout.Span{Cols: 5, Rows: 4},
+		DefaultSpan: layout.Span{Cols: 5, Rows: 5},
 		MinSpan:     layout.Span{Cols: 3, Rows: 2},
 		Needs:       []SourceKind{SourceForecast},
 		Fields: []Field{
 			{
 				Key: "days", Label: "Days to show", Type: FieldNumber,
-				Default: 5, Min: f64(1), Max: f64(5),
+				Default: 5, Min: f64(1), Max: f64(6),
 			},
 			{
 				Key: "orientation", Label: "Layout", Type: FieldSelect,
-				Default: "horizontal",
+				Default: "vertical",
 				Options: []Option{
-					{Value: "horizontal", Label: "Across (columns)"},
-					{Value: "vertical", Label: "Down (rows)"},
+					{Value: "vertical", Label: "Down — one row per day"},
+					{Value: "horizontal", Label: "Across — one column per day"},
 				},
+				Help: "Down matches the original mirror layout.",
+			},
+			{
+				Key: "includeToday", Label: "Include today", Type: FieldBool,
+				Default: true,
+				Help:    "Shows today as the first row, labelled \"Today\".",
+			},
+			{
+				Key: "showHeading", Label: "Show heading", Type: FieldBool,
+				Default: true,
+			},
+			{
+				Key: "heading", Label: "Heading text", Type: FieldText,
+				Default: "WEATHER FORECAST",
 			},
 		},
 		New: newForecast,
@@ -39,68 +54,127 @@ func init() {
 }
 
 type forecastConfig struct {
-	Days        int    `json:"days"`
-	Orientation string `json:"orientation"`
+	Days         int    `json:"days"`
+	Orientation  string `json:"orientation"`
+	IncludeToday bool   `json:"includeToday"`
+	ShowHeading  bool   `json:"showHeading"`
+	Heading      string `json:"heading"`
 }
 
 // Forecast renders the multi-day outlook.
+//
+// Ported from the forecast section of v1's weather_widget.cpp, which was a
+// flex column of day rows — day name on the left at a fixed width, icon in
+// the middle, high/low on the right — under a ruled "WEATHER FORECAST"
+// heading. That vertical arrangement is the default here for the same
+// reason it was chosen there: a mirror is a tall narrow slice of wall, and
+// stacked rows read better across a room than five thin columns.
 type Forecast struct {
 	cfg forecastConfig
 }
 
 func newForecast(raw json.RawMessage) (Widget, error) {
-	cfg := forecastConfig{Days: 5, Orientation: "horizontal"}
+	cfg := forecastConfig{
+		Days:         5,
+		Orientation:  "vertical",
+		IncludeToday: true,
+		ShowHeading:  true,
+		Heading:      "WEATHER FORECAST",
+	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return nil, err
 		}
 	}
-	cfg.Days = clampInt(cfg.Days, 1, 5)
+	cfg.Days = clampInt(cfg.Days, 1, 6)
 	return &Forecast{cfg: cfg}, nil
 }
 
-func (w *Forecast) days(ctx Context) ([]source.ForecastDay, Staleness, bool) {
+// days returns the outlook, and the offset of its first entry from today.
+//
+// Conditions.Forecast starts at today with today's real high and low, so
+// including today is a matter of where to start slicing rather than
+// synthesising a row. An earlier version built today from the current
+// temperature and printed "82° / 82°" — a fabricated range presented as a
+// measured one, which is exactly what this design refuses to do elsewhere.
+func (w *Forecast) days(ctx Context) ([]source.ForecastDay, int, Staleness, bool) {
 	r := store.Get[source.Conditions](ctx.Data, source.KeyWeather)
 	st := StalenessOf(r, ctx.Now)
 	c, ok := r.Get()
 	if !ok || len(c.Forecast) == 0 {
-		return nil, st, false
+		return nil, 0, st, false
 	}
-	days := c.Forecast
-	if len(days) > w.cfg.Days {
-		days = days[:w.cfg.Days]
+
+	out := c.Forecast
+	offset := 0
+	if !w.cfg.IncludeToday {
+		if len(out) < 2 {
+			return nil, 0, st, false
+		}
+		out = out[1:]
+		offset = 1
 	}
-	return days, st, true
+
+	if len(out) > w.cfg.Days {
+		out = out[:w.cfg.Days]
+	}
+	return out, offset, st, true
 }
 
 func (w *Forecast) Key(ctx Context) string {
-	days, st, ok := w.days(ctx)
+	days, off, st, ok := w.days(ctx)
 	if !ok {
 		return "forecast|none|" + st.Key()
 	}
 	var b strings.Builder
-	b.WriteString("forecast|")
-	b.WriteString(st.Key())
+	fmt.Fprintf(&b, "forecast|%s|%d", st.Key(), off)
 	for _, d := range days {
-		fmt.Fprintf(&b, "|%s:%d:%.0f:%.0f",
-			d.Date.Format("01-02"), d.Code, d.High, d.Low)
+		fmt.Fprintf(&b, "|%s:%d:%.0f:%.0f", d.Date.Format("01-02"), d.Code, d.High, d.Low)
 	}
 	return b.String()
 }
 
 func (w *Forecast) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
-	days, st, ok := w.days(ctx)
-
+	days, offset, st, ok := w.days(ctx)
 	if !ok {
 		w.renderEmpty(dst, bounds, ctx, st)
 		return
 	}
-	st.DrawMarker(dst, bounds, ctx, 14)
-	if w.cfg.Orientation == "vertical" {
-		w.renderVertical(dst, bounds, ctx, days)
+
+	area := bounds
+	if w.cfg.ShowHeading && w.cfg.Heading != "" {
+		area = w.drawHeading(dst, bounds, ctx)
+	}
+	st.DrawMarker(dst, bounds, ctx, 13)
+
+	if w.cfg.Orientation == "horizontal" {
+		w.renderHorizontal(dst, area, ctx, days, offset)
 		return
 	}
-	w.renderHorizontal(dst, bounds, ctx, days)
+	w.renderVertical(dst, area, ctx, days, offset)
+}
+
+// drawHeading renders the ruled section header and returns the area left
+// for the rows.
+//
+// v1 drew this as a 14pt grey label with a one-pixel bottom border — the
+// only rule anywhere in that layout, separating current conditions from the
+// outlook beneath.
+func (w *Forecast) drawHeading(dst *image.RGBA, bounds image.Rectangle, ctx Context) image.Rectangle {
+	size := clampInt(bounds.Dy()/16, 11, 22)
+	face, err := ctx.Fonts.Face(render.Regular, size)
+	if err != nil {
+		return bounds
+	}
+
+	y := bounds.Min.Y
+	face.DrawTop(dst, bounds.Min.X, y, strings.ToUpper(w.cfg.Heading), render.Muted)
+	y += face.Height() + 6
+
+	render.HLine(dst, bounds.Min.X, bounds.Max.X, y, 1, render.Faint)
+	y += 8
+
+	return image.Rect(bounds.Min.X, y, bounds.Max.X, bounds.Max.Y)
 }
 
 func (w *Forecast) renderEmpty(dst *image.RGBA, bounds image.Rectangle, ctx Context, st Staleness) {
@@ -116,8 +190,55 @@ func (w *Forecast) renderEmpty(dst *image.RGBA, bounds image.Rectangle, ctx Cont
 		face.Truncate(msg, bounds.Dx()), render.Faint)
 }
 
-func (w *Forecast) renderHorizontal(dst *image.RGBA, bounds image.Rectangle, ctx Context, days []source.ForecastDay) {
+// renderVertical is the v1 arrangement: one row per day, day name left at a
+// fixed width, icon centred, high/low right.
+func (w *Forecast) renderVertical(dst *image.RGBA, bounds image.Rectangle, ctx Context, days []source.ForecastDay, offset int) {
 	n := len(days)
+	if n == 0 {
+		return
+	}
+	rowH := bounds.Dy() / n
+	size := clampInt(rowH/2, 12, 34)
+
+	face, err := ctx.Fonts.Face(render.Regular, size)
+	if err != nil {
+		return
+	}
+
+	// v1 fixed the day column at 120px so "Tomorrow" fit at 22pt. Measuring
+	// the widest label we will actually draw does the same job at any size,
+	// and stays correct if the labels change.
+	dayCol := face.Measure("Tomorrow") + size/2
+
+	iconBox := min(rowH-4, size*2)
+
+	for i, d := range days {
+		y := bounds.Min.Y + i*rowH
+		if y+rowH > bounds.Max.Y+rowH/2 {
+			break
+		}
+		mid := y + (rowH-face.Height())/2
+
+		face.DrawTop(dst, bounds.Min.X, mid, relativeDayName(d.Date, ctx.Local(), i+offset), render.Secondary)
+
+		// Icon sits just past the day column, matching v1's centre slot.
+		if icon, found := render.Icon(d.Icon(), iconBox, iconBox); found {
+			ix := bounds.Min.X + dayCol
+			iy := y + (rowH-icon.Bounds().Dy())/2
+			render.DrawImage(dst, icon, image.Pt(ix, iy))
+		}
+
+		temps := fmt.Sprintf("%.0f° / %.0f°", d.High, d.Low)
+		tw := face.Measure(temps)
+		face.DrawTop(dst, bounds.Max.X-tw, mid, temps, render.Secondary)
+	}
+}
+
+func (w *Forecast) renderHorizontal(dst *image.RGBA, bounds image.Rectangle, ctx Context, days []source.ForecastDay, offset int) {
+	n := len(days)
+	if n == 0 {
+		return
+	}
 	colW := bounds.Dx() / n
 
 	labelSize := clampInt(colW/6, 12, 24)
@@ -132,36 +253,33 @@ func (w *Forecast) renderHorizontal(dst *image.RGBA, bounds image.Rectangle, ctx
 		return
 	}
 
-	iconBox := min(colW*2/3, bounds.Dy()-labelFace.Height()-tempFace.Height()-12)
-	iconBox = max(iconBox, 0)
+	iconBox := max(0, min(colW*2/3, bounds.Dy()-labelFace.Height()-tempFace.Height()-12))
 
 	for i, d := range days {
 		cx := bounds.Min.X + i*colW + colW/2
 		y := bounds.Min.Y
 
+		// Across, there is no room for "Tomorrow"; the weekday is the most
+		// information that fits.
 		label := d.Date.Format("Mon")
+		if i+offset == 0 {
+			label = "Today"
+		}
 		lw := labelFace.Measure(label)
 		labelFace.DrawTop(dst, cx-lw/2, y, label, render.Secondary)
 		y += labelFace.Height() + 4
 
 		if iconBox > 8 {
 			if icon, found := render.Icon(d.Icon(), iconBox, iconBox); found {
-				b := icon.Bounds()
-				render.DrawImage(dst, icon, image.Pt(cx-b.Dx()/2, y))
+				render.DrawImage(dst, icon, image.Pt(cx-icon.Bounds().Dx()/2, y))
 			}
 			y += iconBox + 4
 		}
 
-		metric := ctx.Metric()
 		hi := fmt.Sprintf("%.0f°", d.High)
 		lo := fmt.Sprintf("%.0f°", d.Low)
-		_ = metric
-
-		hw := tempFace.Measure(hi)
-		lw2 := tempFace.Measure(lo)
 		gap := 6
-		total := hw + gap + lw2
-		x := cx - total/2
+		x := cx - (tempFace.Measure(hi)+gap+tempFace.Measure(lo))/2
 
 		if y+tempFace.Height() <= bounds.Max.Y {
 			x = tempFace.DrawTop(dst, x, y, hi, render.Primary)
@@ -170,31 +288,17 @@ func (w *Forecast) renderHorizontal(dst *image.RGBA, bounds image.Rectangle, ctx
 	}
 }
 
-func (w *Forecast) renderVertical(dst *image.RGBA, bounds image.Rectangle, ctx Context, days []source.ForecastDay) {
-	n := len(days)
-	rowH := bounds.Dy() / n
-	size := clampInt(rowH/2, 12, 28)
-
-	face, err := ctx.Fonts.Face(render.Regular, size)
-	if err != nil {
-		return
-	}
-	iconBox := min(rowH-6, size*2)
-
-	for i, d := range days {
-		y := bounds.Min.Y + i*rowH
-		x := bounds.Min.X
-
-		face.DrawTop(dst, x, y+(rowH-face.Height())/2, d.Date.Format("Mon"), render.Secondary)
-		x += face.Measure("Wed") + 12
-
-		if icon, found := render.Icon(d.Icon(), iconBox, iconBox); found {
-			render.DrawImage(dst, icon, image.Pt(x, y+(rowH-icon.Bounds().Dy())/2))
-		}
-
-		temps := fmt.Sprintf("%.0f° / %.0f°", d.High, d.Low)
-		tw := face.Measure(temps)
-		face.DrawTop(dst, bounds.Max.X-tw, y+(rowH-face.Height())/2, temps, render.Primary)
+// relativeDayName reproduces v1's GetDayName: the first two days are named
+// rather than dated, which reads far better than "Thu / Fri" when those are
+// simply today and tomorrow.
+func relativeDayName(date, now time.Time, index int) string {
+	switch index {
+	case 0:
+		return "Today"
+	case 1:
+		return "Tomorrow"
+	default:
+		return date.Format("Mon")
 	}
 }
 
