@@ -15,14 +15,32 @@ IFACE=wlan0
 
 case "$1" in
   start)
-    # Wait for the driver to create the interface.
+    # Load the radio driver explicitly.
+    #
+    # Nothing else does. There is no udev here, and BusyBox mdev is not
+    # configured to autoload modules from a modalias — so on the first real
+    # boot wlan0 simply never appeared and every network layer above it
+    # failed with no obvious cause.
+    if ! grep -q '^brcmfmac ' /proc/modules 2>/dev/null; then
+      if modprobe brcmfmac 2>&1; then
+        echo "network: loaded brcmfmac"
+      else
+        echo "network: modprobe brcmfmac FAILED — check /lib/modules and firmware"
+      fi
+    fi
+
+    # Wait for the driver to probe the SDIO device and create the interface.
     for i in $(seq 1 50); do
       [ -d "/sys/class/net/$IFACE" ] && break
       usleep 100000
     done
 
     if [ ! -d "/sys/class/net/$IFACE" ]; then
-      echo "network: $IFACE never appeared; brcmfmac may have failed to load"
+      echo "network: $IFACE never appeared after loading brcmfmac"
+      echo "network: modules present:"
+      cat /proc/modules 2>/dev/null | awk '{print "  " $1}'
+      echo "network: firmware present:"
+      ls /lib/firmware/brcm/ 2>/dev/null | sed 's/^/  /'
       exit 0
     fi
 

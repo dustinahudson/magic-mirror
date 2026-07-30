@@ -171,8 +171,23 @@ type Supervisor struct {
 	// store. Never called from the render goroutine.
 	OnStatus func(Status)
 
+	// Suspended reports that recovery should not run at all right now —
+	// used while the setup portal owns the radio, where "no connectivity"
+	// is the expected state rather than a fault.
+	Suspended func() bool
+
 	mu     sync.Mutex
 	status Status
+
+	// everUp records whether a probe has ever succeeded.
+	//
+	// This gates the reboot rung, and the reason is a bug found on real
+	// hardware: a device with no wifi credentials climbed the whole ladder
+	// and rebooted, every six minutes, forever. Rebooting is a way to
+	// recover something that *was* working. If it has never worked, there
+	// is nothing to recover to and a reboot is just a loop — exactly the
+	// failure this package exists to prevent.
+	everUp bool
 }
 
 // New returns a Supervisor with workable defaults.
@@ -243,10 +258,23 @@ func (s *Supervisor) Run(ctx context.Context) {
 	}
 
 	for {
+		// While the setup portal owns the radio there is deliberately no
+		// route to anywhere, so probing would escalate against a state that
+		// is working as intended.
+		if s.Suspended != nil && s.Suspended() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(s.Interval):
+			}
+			continue
+		}
+
 		err := s.Probe.Probe(ctx)
 		now := time.Now()
 
 		if err == nil {
+			s.everUp = true
 			s.setStatus(func(st *Status) {
 				st.Up = true
 				st.LastOK = now
@@ -291,14 +319,33 @@ func (s *Supervisor) handleFailure(ctx context.Context, probeErr error, now time
 		return
 	}
 
+	// The ceiling is the reboot rung only for a link that has worked before.
+	// A device that has never associated has nothing to reboot back into.
+	ceiling := RungReboot
+	if !s.everUp {
+		ceiling = RungReloadDriver
+	}
+
 	var next Rung
+	var atCeiling bool
 	s.setStatus(func(st *Status) {
-		if st.Rung < RungReboot {
+		if st.Rung < ceiling {
 			st.Rung++
+		} else {
+			atCeiling = true
 		}
 		st.RecoveryCount++
 		next = st.Rung
 	})
+
+	if atCeiling && !s.everUp {
+		// Stay here rather than rebooting. The setup portal is the right
+		// answer for a device that has never been on a network, and it is
+		// running in parallel.
+		s.Log.Warn("link has never come up; holding at the top of the ladder rather than rebooting",
+			"rung", next.String(), "failures", s.Status().Failures)
+		return
+	}
 
 	s.Log.Warn("link down; escalating",
 		"rung", next.String(), "err", probeErr, "failures", s.Status().Failures)

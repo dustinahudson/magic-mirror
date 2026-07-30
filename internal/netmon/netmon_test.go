@@ -44,6 +44,12 @@ func (f *fakeRunner) ran(substr string) bool {
 	return false
 }
 
+// alwaysFailProbe never succeeds, modelling a device that has no
+// credentials at all.
+type alwaysFailProbe struct{}
+
+func (alwaysFailProbe) Probe(context.Context) error { return errors.New("no link") }
+
 // scriptedProbe fails a fixed number of times, then succeeds.
 type scriptedProbe struct {
 	mu        sync.Mutex
@@ -84,7 +90,10 @@ func testSupervisor(probe Prober, runner Runner) (*Supervisor, *bool) {
 // The whole point of the package: reboot is the last rung, and every
 // cheaper recovery is tried first.
 func TestLadderClimbsInOrderAndRebootsLast(t *testing.T) {
-	probe := &scriptedProbe{failFirst: 1000} // never recovers
+	// Succeeds once so the link counts as having worked, then fails
+	// forever — reboot is only reachable for a link that can be recovered
+	// *to* something.
+	probe := &flakyProbe{succeedFirst: 1}
 	runner := newFakeRunner()
 	s, rebooted := testSupervisor(probe, runner)
 
@@ -187,7 +196,7 @@ func TestRecoveryResetsLadder(t *testing.T) {
 // A failing recovery command must not stop the ladder — that would strand
 // the device at whatever rung threw.
 func TestFailingCommandStillEscalates(t *testing.T) {
-	probe := &scriptedProbe{failFirst: 1000}
+	probe := &flakyProbe{succeedFirst: 1}
 	runner := newFakeRunner()
 	runner.fail["wpa_cli"] = errors.New("wpa_cli not found")
 	runner.fail["rmmod"] = errors.New("module in use")
@@ -240,4 +249,95 @@ func TestStatusIsPublished(t *testing.T) {
 	if !seen[0].Up {
 		t.Error("first published status reports the link down")
 	}
+}
+
+// Regression test for a boot loop observed on real hardware.
+//
+// A Pi with no wpa_supplicant.conf climbed the entire ladder and rebooted,
+// then did it again roughly every six minutes, forever. Rebooting is a way
+// to recover something that was previously working; a link that has never
+// come up has nothing to recover to, so the ladder must stop below reboot.
+func TestNeverConnectedDoesNotReboot(t *testing.T) {
+	probe := alwaysFailProbe{}
+	runner := newFakeRunner()
+	s, rebooted := testSupervisor(probe, runner)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	s.Run(ctx)
+
+	if *rebooted {
+		t.Fatal("rebooted a device that has never had a working link")
+	}
+	// It should still have tried every cheaper recovery.
+	for _, want := range []string{"wpa_cli", "wpa_supplicant", "modprobe"} {
+		if !runner.ran(want) {
+			t.Errorf("never attempted %q before giving up", want)
+		}
+	}
+	if got := s.Status().Rung; got != RungReloadDriver {
+		t.Errorf("Rung = %v, want to hold at RungReloadDriver", got)
+	}
+}
+
+// Once a link has worked, a later failure may legitimately reach reboot.
+func TestPreviouslyConnectedCanReboot(t *testing.T) {
+	// Succeed once, then fail forever.
+	probe := &flakyProbe{succeedFirst: 1}
+	runner := newFakeRunner()
+	s, rebooted := testSupervisor(probe, runner)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(ctx) }()
+
+	deadline := time.After(2 * time.Second)
+	for !*rebooted {
+		select {
+		case <-deadline:
+			t.Fatalf("a link that worked and then died never reached reboot; rung=%v", s.Status().Rung)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+}
+
+// While the setup portal owns the radio there is no route anywhere by
+// design, so recovery must not run at all.
+func TestSuspendedDoesNothing(t *testing.T) {
+	probe := alwaysFailProbe{}
+	runner := newFakeRunner()
+	s, rebooted := testSupervisor(probe, runner)
+	s.Suspended = func() bool { return true }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	s.Run(ctx)
+
+	if *rebooted {
+		t.Error("rebooted while suspended")
+	}
+	if cmds := runner.commands(); len(cmds) > 0 {
+		t.Errorf("ran recovery commands while suspended: %v", cmds)
+	}
+}
+
+// flakyProbe succeeds for the first N calls, then fails forever.
+type flakyProbe struct {
+	mu           sync.Mutex
+	succeedFirst int
+	calls        int
+}
+
+func (p *flakyProbe) Probe(context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	if p.calls <= p.succeedFirst {
+		return nil
+	}
+	return errors.New("link lost")
 }
