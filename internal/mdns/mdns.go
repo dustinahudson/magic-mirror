@@ -89,9 +89,15 @@ func (r *Responder) Run(ctx context.Context) {
 	}
 	r.fqdn = strings.ToLower(r.Host) + ".local."
 
-	conn, err := net.ListenMulticastUDP("udp4", nil, addrIPv4)
-	if err != nil {
-		r.Log.Warn("mDNS unavailable; .local name will not resolve", "err", err)
+	// Keep trying to join the multicast group.
+	//
+	// The app starts within seconds of boot, well before wpa_supplicant has
+	// associated and udhcpc has assigned an address, so the first attempt
+	// essentially always fails. An earlier version logged a warning and
+	// returned — which meant mDNS was dead for the entire session, every
+	// session, and magicmirror.local never resolved once.
+	conn := r.listen(ctx)
+	if conn == nil {
 		return
 	}
 	defer conn.Close()
@@ -123,6 +129,36 @@ func (r *Responder) Run(ctx context.Context) {
 			continue
 		}
 		r.handle(conn, src, buf[:n])
+	}
+}
+
+// listen joins the mDNS multicast group, retrying until it succeeds or ctx
+// is cancelled. Returns nil only on cancellation.
+func (r *Responder) listen(ctx context.Context) *net.UDPConn {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+
+	for attempt := 1; ; attempt++ {
+		conn, err := net.ListenMulticastUDP("udp4", nil, addrIPv4)
+		if err == nil {
+			if attempt > 1 {
+				r.Log.Info("mDNS group joined", "attempts", attempt)
+			}
+			return conn
+		}
+
+		// Only worth a warning once; after that it is just noise in a log
+		// that matters.
+		if attempt == 1 {
+			r.Log.Debug("mDNS not ready yet; will keep trying", "err", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(backoff):
+			backoff = min(backoff*2, maxBackoff)
+		}
 	}
 }
 

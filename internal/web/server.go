@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/dustinahudson/magic-mirror/internal/config"
@@ -35,6 +37,7 @@ type Server struct {
 	log        *slog.Logger
 	configPath string
 	version    string
+	stateDir   string
 
 	// portal, when set, takes precedence over the config UI while the
 	// setup access point is running.
@@ -49,6 +52,9 @@ type Options struct {
 	Listen     string
 	ConfigPath string
 	Version    string
+
+	// StateDir is where logs live, for the /api/logs endpoint.
+	StateDir string
 
 	// Portal lets the setup portal borrow this server's listener rather
 	// than opening a second one on the same port.
@@ -68,6 +74,7 @@ func New(opts Options, applier *Applier, data *store.Store, log *slog.Logger) (*
 		log:        log,
 		configPath: opts.ConfigPath,
 		version:    opts.Version,
+		stateDir:   opts.StateDir,
 		portal:     opts.Portal,
 		ln:         ln,
 	}
@@ -78,6 +85,7 @@ func New(opts Options, applier *Applier, data *store.Store, log *slog.Logger) (*
 	mux.HandleFunc("PUT /api/config", s.handlePutConfig)
 	mux.HandleFunc("GET /api/widget-types", s.handleWidgetTypes)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /api/logs", s.handleLogs)
 
 	s.srv = &http.Server{
 		Handler:           s.route(mux),
@@ -223,6 +231,51 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"version": s.version,
 		"sources": out,
 	})
+}
+
+// handleLogs serves the tail of the device's log files.
+//
+// Exists so the mirror can be diagnosed without pulling its SD card. Nearly
+// every failure during bring-up was understood only after a card round trip,
+// and twice the logs that would have explained it were destroyed by the
+// power cycle that produced them. A device that can describe its own state
+// over the network is worth a great deal more than one that cannot.
+//
+// Read-only, and bounded: only the tail, only known files.
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if s.stateDir == "" {
+		http.Error(w, "no state directory configured", http.StatusNotFound)
+		return
+	}
+
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		name = "mm.log"
+	}
+	// Fixed set rather than a path parameter: this endpoint must never
+	// become a way to read arbitrary files off the device.
+	switch name {
+	case "mm.log", "network.log":
+	default:
+		http.Error(w, "unknown log file", http.StatusBadRequest)
+		return
+	}
+
+	path := filepath.Join(s.stateDir, "logs", name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.Error(w, "log unavailable: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	const maxBytes = 256 << 10
+	if len(data) > maxBytes {
+		data = data[len(data)-maxBytes:]
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(data)
 }
 
 type apiError struct {

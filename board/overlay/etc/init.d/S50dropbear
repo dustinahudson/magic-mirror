@@ -1,44 +1,69 @@
 #!/bin/sh
 #
-# SSH, key-only, with host keys that survive a reboot.
+# SSH, key-only, with a host key that survives reboots.
 #
-# Overrides Buildroot's own S50dropbear for one reason: the rootfs is a cpio
-# in RAM, so anything written to /etc is gone at power-off. The stock script
-# generates host keys into /etc/dropbear, which would mean a brand new host
-# identity on every boot and a host-key warning from ssh every single time.
-# Keys live on the FAT partition instead.
+# The host key lives on a real filesystem (/etc/dropbear, in the RAM rootfs)
+# and is *cached* to the FAT partition, rather than being used directly from
+# it. An earlier version pointed dropbear at /boot with -r and the daemon
+# died mid-key-exchange every time: FAT cannot represent the 0600 a private
+# key needs, since every file inherits the mount's umask. The client saw the
+# connection close at SSH2_MSG_KEX_ECDH_REPLY — the moment dropbear needs to
+# sign with that key.
 #
-# Password authentication is disabled outright. The only credential is the
-# authorized key baked into the rootfs overlay, so there is no password to
-# be weak, guessed, or left at a default.
+# Password authentication is disabled outright (-s -g). The only credential
+# is the authorized key baked into the rootfs, so there is no password to be
+# weak or left at a default. That also means a failure to read the key leaves
+# dropbear with no usable auth method at all, which is worth knowing when
+# debugging a refused login.
 
-KEYDIR=/boot/dropbear
+ETCDIR=/etc/dropbear
+CACHE=/boot/dropbear
+KEY=dropbear_ed25519_host_key
 PIDFILE=/var/run/dropbear.pid
+NETLOG=/boot/logs/network.log
+
+say() {
+  echo "dropbear: $*"
+  mkdir -p "$(dirname "$NETLOG")" 2>/dev/null
+  echo "$(date '+%H:%M:%S') dropbear: $*" >> "$NETLOG" 2>/dev/null || true
+}
 
 case "$1" in
   start)
-    printf 'Starting dropbear: '
+    mkdir -p "$ETCDIR"
+    chmod 700 "$ETCDIR"
 
-    if [ ! -d /boot ] || ! mkdir -p "$KEYDIR" 2>/dev/null; then
-      # /boot not mounted yet, or read-only (the SD card's write-protect
-      # slider does this). Fall back to ephemeral keys rather than not
-      # starting — a changing host key is annoying, no access is worse.
-      KEYDIR=/etc/dropbear
-      mkdir -p "$KEYDIR"
-      echo "(warning: /boot unwritable, host key will not persist)"
+    # Restore a previously generated key, if the card has one.
+    if [ -f "$CACHE/$KEY" ]; then
+      cp "$CACHE/$KEY" "$ETCDIR/$KEY" 2>/dev/null
+      chmod 600 "$ETCDIR/$KEY" 2>/dev/null
+    fi
+
+    # authorized_keys arrives from the rootfs overlay, whose permissions are
+    # not preserved by the image build. Set them here so dropbear does not
+    # silently decline to read the only credential it has.
+    if [ -f /root/.ssh/authorized_keys ]; then
+      chmod 700 /root/.ssh 2>/dev/null
+      chmod 600 /root/.ssh/authorized_keys 2>/dev/null
+    else
+      say "WARNING no /root/.ssh/authorized_keys — no login will be possible"
     fi
 
     # -s  no password logins
     # -g  no password logins for root specifically
-    # -R  generate any missing host key on startup
-    dropbear -s -g -R \
-      -r "$KEYDIR/dropbear_ed25519_host_key" \
-      -P "$PIDFILE" 2>/dev/null
-
+    # -R  generate any missing host key
+    out=$(dropbear -s -g -R -P "$PIDFILE" 2>&1)
     if [ $? -eq 0 ]; then
-      echo "OK"
+      say "started"
     else
-      echo "FAILED"
+      say "FAILED: $out"
+      exit 0
+    fi
+
+    # Cache the key for next boot. Copying it to FAT is fine; only *using*
+    # it from there is not.
+    if [ -f "$ETCDIR/$KEY" ] && mkdir -p "$CACHE" 2>/dev/null; then
+      cp "$ETCDIR/$KEY" "$CACHE/$KEY" 2>/dev/null && sync
     fi
     ;;
 
