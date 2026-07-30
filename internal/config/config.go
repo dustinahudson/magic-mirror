@@ -27,6 +27,11 @@ import (
 type Config struct {
 	Timezone string `json:"timezone"`
 
+	// Hostname is the name the mirror answers to over mDNS, so
+	// <hostname>.local resolves on whatever network it joins. Without the
+	// .local suffix.
+	Hostname string `json:"hostname"`
+
 	// Units is "imperial" or "metric", applied to every widget that shows a
 	// measurement.
 	Units string `json:"units"`
@@ -110,6 +115,7 @@ type Web struct {
 func Default() Config {
 	return Config{
 		Timezone: "America/Chicago",
+		Hostname: "magicmirror",
 		Units:    "imperial",
 		Weather:  Weather{Zipcode: "64111"},
 		Layout: Layout{
@@ -329,6 +335,9 @@ func (c *Config) fillDefaults() {
 	}
 	if c.Timezone == "" {
 		c.Timezone = d.Timezone
+	}
+	if c.Hostname == "" {
+		c.Hostname = d.Hostname
 	}
 	if c.Layout.Cols == 0 {
 		c.Layout.Cols = d.Layout.Cols
