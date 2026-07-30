@@ -16,8 +16,14 @@ CONFIG_LOGO=y
 CONFIG_LOGO_LINUX_CLUT224=y
 
 # --- WiFi: BCM43430 over SDIO ---
-CONFIG_CFG80211=y
-CONFIG_MAC80211=y
+# Left as whatever the base defconfig chooses (they build as modules).
+#
+# An earlier version forced CONFIG_CFG80211=y here. The override did not
+# take — Kconfig resolved it back to =m — and the post-build prune then
+# deleted cfg80211.ko because a comment claimed it was built in. brcmfmac
+# then failed with "Unknown symbol cfg80211_get_p2p_attr" and wlan0 never
+# appeared. post-build.sh now derives what to keep from modules.dep, so it
+# no longer matters which way this resolves.
 
 # brcmfmac is a MODULE, deliberately, and this is load-bearing: the recovery
 # ladder does `rmmod brcmfmac && modprobe brcmfmac` to hard-reset a wedged

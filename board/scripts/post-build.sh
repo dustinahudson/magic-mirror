@@ -60,55 +60,81 @@ rm -rf "$FW/cypress"
 
 # --- Kernel modules -----------------------------------------------------
 #
-# Keep brcmfmac and brcmutil, drop the rest. The bcmrpi defconfig builds
-# ~970 modules for hardware a Zero W does not have; the radio needs two.
+# Keep the radio driver and everything it depends on; drop the rest. The
+# bcmrpi defconfig builds ~970 modules for hardware a Zero W does not have.
 #
 # brcmfmac stays a module on purpose: the recovery ladder reloads it to
 # hard-reset a wedged radio without rebooting, which is only possible for a
-# module. cfg80211 and mac80211 are built in, so brcmfmac's only module-level
-# dependency is brcmutil.
+# module.
 #
-# Matching is extension-agnostic. This kernel compresses modules to .ko.xz,
-# and an earlier version of this script looked for bare .ko and silently
-# matched nothing at all.
+# The dependency set is computed from modules.dep rather than hand-listed.
+# An earlier version of this script hardcoded "brcmfmac* and brcmutil*" on
+# the assumption that cfg80211 was built into the kernel. It was not — the
+# CONFIG_CFG80211=y in linux.fragment did not take and it built as a module,
+# which the prune then deleted. brcmfmac shipped intact but could not
+# resolve a single cfg80211 symbol, so wlan0 never appeared and every layer
+# above it failed. Asking depmod removes the whole class of mistake.
 
 MODDIR=$(find "$TARGET/lib/modules" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
 if [ -n "${MODDIR:-}" ]; then
+    kver=$(basename "$MODDIR")
     total=$(find "$MODDIR" -name '*.ko*' | wc -l)
 
-    kept=0
-    while IFS= read -r mod; do
-        base=$(basename "$mod")
-        case "$base" in
-            brcmfmac*|brcmutil*) kept=$((kept + 1)) ;;
-            *) rm -f "$mod" ;;
-        esac
-    done < <(find "$MODDIR" -name '*.ko*')
-
-    find "$MODDIR" -type d -empty -delete 2>/dev/null || true
-
-    if [ "$kept" -eq 0 ]; then
-        say "WARNING kept no modules — brcmfmac is missing, so WiFi will not come up"
+    if ! command -v depmod >/dev/null 2>&1; then
+        say "WARNING no depmod on the host; leaving all $total modules in place"
     else
-        say "kernel modules: $total -> $kept (brcmfmac, brcmutil)"
-    fi
+        # Build a dependency map over the FULL module set first. Pruning
+        # before this point would be pruning blind.
+        depmod -b "$TARGET" "$kver" 2>/dev/null || true
 
-    # Regenerate modules.dep.
-    #
-    # Not merely housekeeping after the prune: Buildroot leaves modules.dep
-    # empty here, and modprobe refuses to load anything without it — so the
-    # driver-reload rung of the recovery ladder would fail even with the
-    # module present.
-    kver=$(basename "$MODDIR")
-    if command -v depmod >/dev/null 2>&1; then
+        keep="$(mktemp)"
+        for want in brcmfmac brcmutil; do
+            # modules.dep lines are "path/mod.ko: dep1.ko dep2.ko ...", and
+            # depmod expands dependencies transitively — so the module plus
+            # its listed deps is the complete closure.
+            awk -v m="/${want}" '
+                $1 ~ m { sub(/:$/, "", $1); for (i = 1; i <= NF; i++) print $i }
+            ' "$MODDIR/modules.dep" >> "$keep" 2>/dev/null || true
+        done
+        sort -u "$keep" -o "$keep"
+
+        if [ ! -s "$keep" ]; then
+            say "WARNING brcmfmac not found in modules.dep; leaving all modules in place"
+        else
+            # Delete anything not in the closure.
+            while IFS= read -r mod; do
+                rel=${mod#"$MODDIR"/}
+                grep -qxF "$rel" "$keep" || rm -f "$mod"
+            done < <(find "$MODDIR" -name '*.ko*')
+
+            find "$MODDIR" -type d -empty -delete 2>/dev/null || true
+            kept=$(find "$MODDIR" -name '*.ko*' | wc -l)
+            say "kernel modules: $total -> $kept"
+            say "kept: $(find "$MODDIR" -name '*.ko*' -printf '%f ' 2>/dev/null)"
+
+            # Fail loudly rather than shipping an image whose radio cannot
+            # load. This is the check that would have caught the bug above.
+            for required in brcmfmac cfg80211; do
+                if ! find "$MODDIR" -name "${required}*.ko*" | grep -q . &&
+                   ! grep -q "^${required} " "$TARGET/lib/modules/$kver/modules.builtin" 2>/dev/null &&
+                   ! grep -q "/${required}.ko" "$TARGET/lib/modules/$kver/modules.builtin" 2>/dev/null; then
+                    say "ERROR $required is neither a kept module nor built in — WiFi will not work"
+                    exit 1
+                fi
+            done
+        fi
+        rm -f "$keep"
+
+        # Regenerate over the pruned set.
+        #
+        # Not merely housekeeping: Buildroot leaves modules.dep empty here,
+        # and modprobe refuses to load anything without it.
         if depmod -b "$TARGET" "$kver" 2>/dev/null; then
             deps=$(wc -l < "$MODDIR/modules.dep" 2>/dev/null || echo 0)
             say "regenerated modules.dep ($deps entries)"
         else
             say "WARNING depmod failed; modprobe brcmfmac will not work"
         fi
-    else
-        say "WARNING no depmod on the host; modprobe brcmfmac will not work"
     fi
 fi
 
