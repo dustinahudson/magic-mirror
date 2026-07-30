@@ -82,6 +82,8 @@ log "starting $(basename "$CURRENT") (attempt $((fails + 1)))"
 "$CURRENT" \
   -config "$CONFIG" \
   -fb /dev/fb0 \
+  -wifi wlan0 \
+  -watchdog /dev/watchdog \
   -state "$BOOT" \
   >> "$LOG" 2>&1
 
