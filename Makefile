@@ -92,6 +92,43 @@ savedefconfig: $(BUILDROOT_DIR)
 	$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR_EXTERNAL) savedefconfig \
 		BR2_DEFCONFIG=$(BR_EXTERNAL)/configs/magicmirror_defconfig
 
+# --- Deploy over the network ---
+#
+# The iteration loop that replaces swapping the SD card. An app change is a
+# 9MB copy and a sub-second respawn; only a kernel or init-script change
+# needs a reboot, and neither needs a card reader.
+
+MIRROR ?= magicmirror.local
+
+.PHONY: deploy
+deploy: binary
+	@echo "deploying to $(MIRROR)"
+	scp -O $(DIST)/magicmirror-armv6 root@$(MIRROR):/boot/mm.new
+	# Swap and restart atomically-ish: keep the outgoing binary as the
+	# rollback copy, rename the new one into place, then exit the app so
+	# init respawns it. No reboot involved.
+	ssh root@$(MIRROR) 'cp /boot/mm.current /boot/mm.previous 2>/dev/null; \
+		mv /boot/mm.new /boot/mm.current && chmod +x /boot/mm.current && sync && \
+		killall magicmirror mm.current 2>/dev/null; true'
+	@echo "deployed; the app should be back within a second or two"
+
+# A kernel or init-script change needs the whole image and a reboot.
+.PHONY: deploy-os
+deploy-os: image
+	@echo "deploying kernel to $(MIRROR)"
+	scp -O board/buildroot/output/images/boot/kernel.img root@$(MIRROR):/boot/kernel.new
+	ssh root@$(MIRROR) 'cp /boot/kernel.img /boot/kernel.prev.img 2>/dev/null; \
+		mv /boot/kernel.new /boot/kernel.img && sync && reboot'
+	@echo "rebooting; back in about 15 seconds"
+
+.PHONY: logs
+logs:
+	ssh root@$(MIRROR) 'tail -f /boot/logs/mm.log'
+
+.PHONY: shell
+shell:
+	ssh root@$(MIRROR)
+
 # --- Card ---
 
 .PHONY: card

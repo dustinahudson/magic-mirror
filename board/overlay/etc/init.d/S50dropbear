@@ -1,0 +1,60 @@
+#!/bin/sh
+#
+# SSH, key-only, with host keys that survive a reboot.
+#
+# Overrides Buildroot's own S50dropbear for one reason: the rootfs is a cpio
+# in RAM, so anything written to /etc is gone at power-off. The stock script
+# generates host keys into /etc/dropbear, which would mean a brand new host
+# identity on every boot and a host-key warning from ssh every single time.
+# Keys live on the FAT partition instead.
+#
+# Password authentication is disabled outright. The only credential is the
+# authorized key baked into the rootfs overlay, so there is no password to
+# be weak, guessed, or left at a default.
+
+KEYDIR=/boot/dropbear
+PIDFILE=/var/run/dropbear.pid
+
+case "$1" in
+  start)
+    printf 'Starting dropbear: '
+
+    if [ ! -d /boot ] || ! mkdir -p "$KEYDIR" 2>/dev/null; then
+      # /boot not mounted yet, or read-only (the SD card's write-protect
+      # slider does this). Fall back to ephemeral keys rather than not
+      # starting — a changing host key is annoying, no access is worse.
+      KEYDIR=/etc/dropbear
+      mkdir -p "$KEYDIR"
+      echo "(warning: /boot unwritable, host key will not persist)"
+    fi
+
+    # -s  no password logins
+    # -g  no password logins for root specifically
+    # -R  generate any missing host key on startup
+    dropbear -s -g -R \
+      -r "$KEYDIR/dropbear_ed25519_host_key" \
+      -P "$PIDFILE" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+      echo "OK"
+    else
+      echo "FAILED"
+    fi
+    ;;
+
+  stop)
+    [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+    ;;
+
+  restart|reload)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

@@ -76,6 +76,17 @@ BR2_PACKAGE_HOSTAPD_DRIVER_NL80211=y
 BR2_PACKAGE_DNSMASQ=y
 BR2_PACKAGE_IW=y
 
+# --- Remote access ---
+#
+# Key-only SSH. Worth the ~1MB: most of the bring-up failures so far
+# (missing /sys, a deleted cfg80211 module, no clock) would have been
+# obvious in seconds from a shell, and were instead diagnosed over several
+# SD-card round trips. It is also what makes push-deploy possible.
+BR2_PACKAGE_DROPBEAR=y
+# No password login at all; the only credential is the authorized key in
+# the rootfs overlay.
+# BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS is not set
+
 # --- CA certificates for HTTPS ---
 # Go's crypto/tls needs a trust store; it does not carry one.
 BR2_PACKAGE_CA_CERTIFICATES=y
