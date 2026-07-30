@@ -134,8 +134,12 @@ type Coordinator struct {
 	// boot can legitimately take twenty seconds.
 	Grace time.Duration
 
-	// PortalAddr is where the setup page listens.
-	PortalAddr string
+	// Mux is where the portal's handler is published while the AP is up.
+	//
+	// The config web server owns port 80 and borrows this, rather than the
+	// portal opening a second listener — two servers cannot both hold the
+	// one port a captive portal is required to use.
+	Mux *Mux
 
 	// Poll is how often the link is checked.
 	Poll time.Duration
@@ -152,12 +156,12 @@ type Coordinator struct {
 // NewCoordinator returns a Coordinator with workable defaults.
 func NewCoordinator(p *Portal, log *slog.Logger) *Coordinator {
 	return &Coordinator{
-		Portal:     p,
-		Link:       InterfaceLink{},
-		Grace:      45 * time.Second,
-		PortalAddr: DefaultIP + ":80",
-		Poll:       5 * time.Second,
-		Log:        log,
+		Portal: p,
+		Link:   InterfaceLink{},
+		Grace:  45 * time.Second,
+		Mux:    &Mux{},
+		Poll:   5 * time.Second,
+		Log:    log,
 	}
 }
 
@@ -251,22 +255,23 @@ func (c *Coordinator) runPortal(ctx context.Context) error {
 	}
 	c.Log.Info("scanned for networks", "found", len(networks))
 
+	// Publish the handler before the AP comes up, so a phone that joins
+	// immediately cannot race ahead of it.
+	handler, done := c.Portal.Handler(networks)
+	c.Mux.Set(handler)
+	defer c.Mux.Clear()
+
 	if err := c.Portal.Start(ctx); err != nil {
 		return err
 	}
 	defer func() { _ = c.Portal.Stop(context.Background()) }()
-
-	srv, err := Serve(c.PortalAddr, c.Portal, networks)
-	if err != nil {
-		return err
-	}
-	defer srv.Close()
 
 	c.setState(State{
 		Mode:     ModePortal,
 		SSID:     c.Portal.SSID,
 		URL:      "http://" + DefaultIP,
 		Networks: len(networks),
+		Iface:    c.Portal.Interface,
 	})
 
 	c.Log.Info("setup portal ready",
@@ -275,7 +280,7 @@ func (c *Coordinator) runPortal(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return nil
-	case <-srv.Done():
+	case <-done:
 	}
 
 	c.Log.Info("credentials accepted; returning to client mode")

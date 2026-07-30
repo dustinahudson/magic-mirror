@@ -1,42 +1,52 @@
 package provision
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// Server is the HTTP setup portal served while the AP is up.
+// Mux lets the config web server hand requests to the setup portal while
+// provisioning is active.
 //
-// Kept deliberately small: one page, a scan list, and a form. Anything a
-// phone browser needs to render without a network connection to fetch it
-// from — no external CSS, no fonts, no framework.
-type Server struct {
-	portal   *Portal
-	networks []Network
-
-	mu       sync.Mutex
-	saved    bool
-	lastErr  string
-	srv      *http.Server
-	ln       net.Listener
-	doneOnce sync.Once
-	done     chan struct{}
+// There is exactly one HTTP server on port 80, and what it serves depends on
+// the mode. An earlier version gave the portal its own listener on
+// 192.168.4.1:80, which failed with "address already in use" — the config UI
+// binds :80 on all interfaces, so it already owns that address. Two servers
+// competing for the one port a captive portal is required to use was never
+// going to work.
+type Mux struct {
+	h atomic.Pointer[http.Handler]
 }
 
-// Serve starts the portal on addr. networks is the scan captured before the
-// AP claimed the radio.
-func Serve(addr string, p *Portal, networks []Network) (*Server, error) {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("portal listen %s: %w", addr, err)
-	}
+// Set installs the portal handler. Called when the AP comes up.
+func (m *Mux) Set(h http.Handler) { m.h.Store(&h) }
 
-	s := &Server{portal: p, networks: networks, ln: ln, done: make(chan struct{})}
+// Clear removes it. Called when the AP goes away.
+func (m *Mux) Clear() { m.h.Store(nil) }
+
+// Handler returns the active portal handler, or nil when provisioning is not
+// running. A single atomic load, safe to call per request.
+func (m *Mux) Handler() http.Handler {
+	if p := m.h.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// Portal returns an http.Handler serving the setup page, plus a channel
+// closed once credentials have been accepted.
+//
+// networks is the scan captured before hostapd claimed the radio.
+func (p *Portal) Handler(networks []Network) (http.Handler, <-chan struct{}) {
+	s := &portalHandler{
+		portal:   p,
+		networks: networks,
+		done:     make(chan struct{}),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
@@ -57,41 +67,35 @@ func Serve(addr string, p *Portal, networks []Network) (*Server, error) {
 		mux.HandleFunc(probe, s.handleCaptiveProbe)
 	}
 
-	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = s.srv.Serve(ln) }()
-	return s, nil
+	return mux, s.done
 }
 
-// Addr is the resolved listen address.
-func (s *Server) Addr() string { return s.ln.Addr().String() }
+type portalHandler struct {
+	portal   *Portal
+	networks []Network
 
-// Done is closed once credentials have been accepted.
-func (s *Server) Done() <-chan struct{} { return s.done }
-
-// Close stops the portal.
-func (s *Server) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	return s.srv.Shutdown(ctx)
+	mu       sync.Mutex
+	doneOnce sync.Once
+	done     chan struct{}
 }
 
-func (s *Server) handleCaptiveProbe(w http.ResponseWriter, r *http.Request) {
+func (s *portalHandler) handleCaptiveProbe(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "http://"+DefaultIP+"/", http.StatusFound)
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (s *portalHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(portalHTML))
 }
 
-func (s *Server) handleNetworks(w http.ResponseWriter, r *http.Request) {
+func (s *portalHandler) handleNetworks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(s.networks)
 }
 
-func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
+func (s *portalHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SSID     string `json:"ssid"`
 		Password string `json:"password"`
@@ -105,16 +109,9 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// Validation happens before anything is written, so a bad password
 	// leaves a working config untouched.
 	if err := s.portal.SaveCredentials(r.Context(), req.SSID, req.Password, req.Country); err != nil {
-		s.mu.Lock()
-		s.lastErr = err.Error()
-		s.mu.Unlock()
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	s.mu.Lock()
-	s.saved = true
-	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -165,7 +162,6 @@ const portalHTML = `<!doctype html>
   .msg { margin-top: 1rem; padding: .75rem; border-radius: 8px; font-size: .9rem; display: none; }
   .msg.err { display: block; border: 1px solid #f85149; color: #f85149; }
   .msg.ok  { display: block; border: 1px solid #3fb950; color: #3fb950; }
-  .sig { color: #5a5a66; }
 </style>
 
 <h1>Magic Mirror setup</h1>

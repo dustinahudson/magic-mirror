@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/dustinahudson/magic-mirror/internal/config"
+	"github.com/dustinahudson/magic-mirror/internal/provision"
 	"github.com/dustinahudson/magic-mirror/internal/store"
 	"github.com/dustinahudson/magic-mirror/internal/widget"
 )
@@ -35,6 +36,10 @@ type Server struct {
 	configPath string
 	version    string
 
+	// portal, when set, takes precedence over the config UI while the
+	// setup access point is running.
+	portal *provision.Mux
+
 	srv *http.Server
 	ln  net.Listener
 }
@@ -44,6 +49,10 @@ type Options struct {
 	Listen     string
 	ConfigPath string
 	Version    string
+
+	// Portal lets the setup portal borrow this server's listener rather
+	// than opening a second one on the same port.
+	Portal *provision.Mux
 }
 
 // New starts the config server.
@@ -59,6 +68,7 @@ func New(opts Options, applier *Applier, data *store.Store, log *slog.Logger) (*
 		log:        log,
 		configPath: opts.ConfigPath,
 		version:    opts.Version,
+		portal:     opts.Portal,
 		ln:         ln,
 	}
 
@@ -70,11 +80,30 @@ func New(opts Options, applier *Applier, data *store.Store, log *slog.Logger) (*
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 
 	s.srv = &http.Server{
-		Handler:           mux,
+		Handler:           s.route(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() { _ = s.srv.Serve(ln) }()
 	return s, nil
+}
+
+// route hands requests to the setup portal while provisioning is active,
+// and to the config UI otherwise.
+//
+// One server owns port 80 because a captive portal has to live there and
+// cannot share. Serving the config page to a phone that joined
+// MagicMirror-Setup would also be useless — there is nothing to configure
+// until the mirror is on a network.
+func (s *Server) route(configUI http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.portal != nil {
+			if h := s.portal.Handler(); h != nil {
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
+		configUI.ServeHTTP(w, r)
+	})
 }
 
 // Addr is the resolved listen address.
