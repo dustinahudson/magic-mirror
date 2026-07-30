@@ -17,7 +17,7 @@ import (
 	"sync"
 )
 
-//go:embed fonts/Inter-Light.ttf fonts/Inter-Regular.ttf fonts/Inter-SemiBold.ttf
+//go:embed fonts/Inter-Light.ttf fonts/Inter-Regular.ttf fonts/Inter-SemiBold.ttf fonts/Inter-Italic.ttf
 var fontFS embed.FS
 
 //go:embed icons/*.png
@@ -28,6 +28,11 @@ const (
 	FontLight    = "fonts/Inter-Light.ttf"
 	FontRegular  = "fonts/Inter-Regular.ttf"
 	FontSemiBold = "fonts/Inter-SemiBold.ttf"
+
+	// Italic exists for one reason: markdown emphasis. Rendering *this* in
+	// the same face as the surrounding text means the emphasis silently
+	// does nothing, which is worse than not supporting it.
+	FontItalic = "fonts/Inter-Italic.ttf"
 )
 
 // Font returns the raw TTF bytes for one of the Font* constants.

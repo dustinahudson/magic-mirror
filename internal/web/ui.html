@@ -55,12 +55,16 @@
   .field.check { flex-direction: row; align-items: center; gap: .5rem; flex-basis: 100%; }
   .field.check > label { color: var(--fg); font-size: .92rem; }
 
-  input, select {
+  input, select, textarea {
     background: #0e0e12; color: var(--fg);
     border: 1px solid var(--line2); border-radius: 8px;
     padding: .55rem .7rem; font: inherit; font-size: .95rem; width: 100%;
   }
-  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea {
+    min-height: 11rem; resize: vertical; line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9rem;
+  }
   input[type=checkbox] { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); flex: none; }
 
   button {
@@ -528,6 +532,11 @@ function renderField(inst, f) {
 
   let input;
   switch (f.type) {
+    case 'multiline':
+      input = el('textarea', { rows: 10, spellcheck: 'true',
+        oninput: e => set(e.target.value) });
+      input.value = cur ?? '';
+      break;
     case 'number':
       input = el('input', { type: 'number', value: cur ?? '',
         ...(f.min !== undefined ? { min: f.min } : {}),
@@ -562,7 +571,8 @@ function renderField(inst, f) {
         oninput: e => set(e.target.value) });
   }
 
-  return el('div', { class: 'field' },
+  return el('div', { class: 'field' + (f.type === 'multiline' ? '' : ''),
+      ...(f.type === 'multiline' ? { style: 'flex-basis:100%' } : {}) },
     el('label', {}, f.label || f.key), input,
     f.help ? el('span', { class: 'help' }, f.help) : null);
 }

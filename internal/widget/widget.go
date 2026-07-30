@@ -98,6 +98,11 @@ const (
 	FieldColor    FieldType = "color"
 	FieldURL      FieldType = "url"
 	FieldDuration FieldType = "duration"
+
+	// FieldMultiline is a several-line text box. Distinct from FieldText
+	// because a note is written, not filled in — a single-line input for
+	// markdown would be unusable.
+	FieldMultiline FieldType = "multiline"
 	// FieldFeeds is a multi-select over the configured calendar feeds.
 	// Feeds are defined once at top level and referenced by id, so a URL
 	// lives in exactly one place.

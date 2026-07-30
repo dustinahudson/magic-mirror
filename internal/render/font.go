@@ -22,6 +22,7 @@ const (
 	Light Weight = iota
 	Regular
 	SemiBold
+	Italic
 )
 
 func (w Weight) asset() string {
@@ -30,6 +31,8 @@ func (w Weight) asset() string {
 		return assets.FontLight
 	case SemiBold:
 		return assets.FontSemiBold
+	case Italic:
+		return assets.FontItalic
 	default:
 		return assets.FontRegular
 	}
