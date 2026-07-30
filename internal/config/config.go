@@ -126,15 +126,27 @@ func Default() Config {
 		},
 		Update: Update{Enabled: true, Repo: "dustinahudson/magic-mirror", Channel: "stable"},
 		Web:    Web{Enabled: true, Listen: ":80"},
+
+		// A narrow left rail of clock, conditions, outlook and agenda, with
+		// the calendar taking the whole right nine columns at full height.
+		//
+		// Arrived at by dragging tiles around in the editor on the real
+		// panel rather than by reasoning about it here, which is why the
+		// proportions are odd numbers: the calendar earns the space because
+		// a four-week grid at that size is readable from across a room,
+		// and everything else is a glance.
+		//
+		// No status bar. It reports only unhealthy sources, so on a working
+		// mirror it is an empty strip — worth having while bringing the
+		// device up, not worth a permanent row afterwards. Add it back from
+		// the config page if something starts misbehaving.
 		Widgets: []Instance{
-			{ID: "clock", Type: "datetime", Pos: layout.Pos{Col: 0, Row: 0, ColSpan: 5, RowSpan: 3}},
-			{ID: "weather", Type: "weather", Pos: layout.Pos{Col: 7, Row: 0, ColSpan: 5, RowSpan: 3}},
-			{ID: "forecast", Type: "forecast", Pos: layout.Pos{Col: 7, Row: 3, ColSpan: 5, RowSpan: 4}},
-			// Rows 8-14; the status bar owns row 15. Overlapping it would
-			// let the bar clear the calendar's final week.
-			{ID: "calendar", Type: "calendar", Pos: layout.Pos{Col: 0, Row: 8, ColSpan: 6, RowSpan: 7}},
-			{ID: "events", Type: "upcoming_events", Pos: layout.Pos{Col: 6, Row: 8, ColSpan: 6, RowSpan: 7}},
-			{ID: "status", Type: "status", Pos: layout.Pos{Col: 0, Row: 15, ColSpan: 12, RowSpan: 1}},
+			{ID: "clock", Type: "datetime", Pos: layout.Pos{Col: 0, Row: 0, ColSpan: 3, RowSpan: 2}},
+			{ID: "weather", Type: "weather", Pos: layout.Pos{Col: 0, Row: 2, ColSpan: 3, RowSpan: 2}},
+			{ID: "forecast", Type: "forecast", Pos: layout.Pos{Col: 0, Row: 4, ColSpan: 3, RowSpan: 7}},
+			{ID: "events", Type: "upcoming_events", Pos: layout.Pos{Col: 0, Row: 11, ColSpan: 3, RowSpan: 5},
+				Config: json.RawMessage(`{"horizonDays":90,"maxEvents":8,"showLocation":false}`)},
+			{ID: "calendar", Type: "calendar", Pos: layout.Pos{Col: 3, Row: 0, ColSpan: 9, RowSpan: 16}},
 		},
 	}
 }
