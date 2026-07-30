@@ -23,6 +23,18 @@ case "$1" in
       usleep 100000
     done
 
+    # Repair before mounting.
+    #
+    # FAT has no journal and this device gets unplugged rather than shut
+    # down, so an interrupted write leaves the filesystem inconsistent.
+    # Writing onto that inconsistency later can orphan an entire file's
+    # clusters — which is exactly how kernel.img became a zero-byte file
+    # and the mirror stopped booting entirely.
+    if command -v fsck.vfat >/dev/null 2>&1; then
+      fsck.vfat -a "$BOOT_DEV" >/dev/null 2>&1
+      echo "checked, "
+    fi
+
     if ! mount -t vfat -o rw,flush,noatime "$BOOT_DEV" "$BOOT_MNT"; then
       echo "FAILED"
       # Carry on booting anyway. A mirror that comes up with no config and

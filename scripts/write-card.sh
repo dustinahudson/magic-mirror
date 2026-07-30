@@ -137,8 +137,35 @@ fi
 
 sync
 sudo umount "$MNT"
+
+# Verify by reading back from the card, not from the page cache.
+#
+# cp succeeding and a post-copy ls both lie: they read what the kernel has
+# buffered, not what reached the flash. A write onto a FAT that was left
+# inconsistent by an unclean shutdown can orphan an entire file's clusters,
+# and the only way to find out is to unmount and read it back. This happened
+# for real — kernel.img reported 11MB and was zero bytes on the card, giving
+# a device that would not boot.
+echo "Verifying..."
+sudo mount -o ro "$PART" "$MNT"
+bad=0
+for f in "$STAGE"/*; do
+  [ -f "$f" ] || continue
+  name=$(basename "$f")
+  if ! sudo cmp -s "$f" "$MNT/$name"; then
+    red "  $name MISMATCH"
+    bad=1
+  fi
+done
+sudo umount "$MNT"
 trap - EXIT
 rmdir "$MNT"
+
+if [ "$bad" != 0 ]; then
+  red "Verification FAILED — do not boot this card."
+  exit 1
+fi
+green "Verified: every file on the card matches the build."
 
 green "Done."
 cat <<'NOTES'

@@ -14,6 +14,10 @@
 #
 # Format is BusyBox date's native YYYYMMDDhhmm.ss, so this needs no
 # optional date features compiled in.
+#
+# Numbered S15 so it runs AFTER S10boot mounts /boot. As S05 it ran before
+# the partition holding the saved time was even mounted, so the restore
+# could never have worked.
 
 CLOCK=/boot/clock
 

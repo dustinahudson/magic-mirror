@@ -76,6 +76,17 @@ BR2_PACKAGE_HOSTAPD_DRIVER_NL80211=y
 BR2_PACKAGE_DNSMASQ=y
 BR2_PACKAGE_IW=y
 
+# --- Filesystem repair ---
+#
+# fsck.vfat, so the device can repair its own boot partition at startup.
+# FAT has no journal, and this is an appliance people unplug rather than
+# shut down — an interrupted write leaves the filesystem inconsistent, and
+# a later write onto that inconsistency can orphan a whole file's clusters.
+# That is not hypothetical: it silently truncated kernel.img to zero bytes
+# and produced a device that would not boot at all.
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
+
 # --- Remote access ---
 #
 # Key-only SSH. Worth the ~1MB: most of the bring-up failures so far
