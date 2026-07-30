@@ -22,6 +22,11 @@ GOARM  := 6
 
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
+# Explicit package list rather than ./... — after a build, board/buildroot
+# contains gcc's own Go testsuite, thousands of deliberately-malformed files
+# that break any recursive walk.
+PKGS := ./cmd/... ./internal/... ./assets/...
+
 .PHONY: all
 all: binary
 
@@ -49,11 +54,11 @@ run: host
 
 .PHONY: test
 test:
-	go test ./...
+	go test $(PKGS)
 
 .PHONY: lint
 lint:
-	go vet ./...
+	go vet $(PKGS)
 	gofmt -l . | grep -v '^board/' || true
 
 # --- OS image ---

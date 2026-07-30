@@ -85,6 +85,7 @@ log "starting $(basename "$CURRENT") (attempt $((fails + 1)))"
   -wifi wlan0 \
   -watchdog /dev/watchdog \
   -state "$BOOT" \
+  -wpa-conf "$BOOT/wpa_supplicant.conf" \
   >> "$LOG" 2>&1
 
 status=$?
