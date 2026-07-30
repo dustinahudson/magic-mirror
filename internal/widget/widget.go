@@ -46,6 +46,14 @@ func (c Context) Local() time.Time {
 	return c.Now.In(c.Loc)
 }
 
+// Location is the configured timezone, never nil.
+func (c Context) Location() *time.Location {
+	if c.Loc == nil {
+		return time.UTC
+	}
+	return c.Loc
+}
+
 // Widget is one tile on the mirror.
 type Widget interface {
 	// Key returns a value that changes exactly when the rendered output

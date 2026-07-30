@@ -27,6 +27,10 @@ var (
 	Error = color.RGBA{250, 82, 88, 255}
 )
 
+// RGBA aliases color.RGBA so widget code can name palette values without
+// importing image/color alongside this package.
+type RGBA = color.RGBA
+
 // Gray returns a neutral grey at the given level.
 func Gray(v uint8) color.RGBA { return color.RGBA{v, v, v, 255} }
 

@@ -1,0 +1,41 @@
+{
+  "timezone": "America/Chicago",
+  "units": "imperial",
+
+  "weather": {
+    "zipcode": "64111"
+  },
+
+  "layout": { "cols": 12, "rows": 16, "padding": 20, "gap": 5 },
+
+  "calendars": [
+    {
+      "id": "personal",
+      "url": "https://calendar.google.com/calendar/ical/.../basic.ics",
+      "name": "Personal",
+      "color": "#52FA7F"
+    },
+    {
+      "id": "work",
+      "url": "",
+      "name": "Work",
+      "color": "#FA5258"
+    }
+  ],
+
+  "widgets": [
+    { "id": "clock",    "type": "datetime",        "pos": { "col": 0, "row": 0,  "colSpan": 5,  "rowSpan": 3 } },
+    { "id": "weather",  "type": "weather",         "pos": { "col": 7, "row": 0,  "colSpan": 5,  "rowSpan": 3 } },
+    { "id": "forecast", "type": "forecast",        "pos": { "col": 7, "row": 3,  "colSpan": 5,  "rowSpan": 4 } },
+    { "id": "calendar", "type": "calendar",        "pos": { "col": 0, "row": 8,  "colSpan": 6,  "rowSpan": 7 } },
+    {
+      "id": "events", "type": "upcoming_events",
+      "pos": { "col": 6, "row": 8, "colSpan": 6, "rowSpan": 7 },
+      "config": { "maxEvents": 8, "horizonDays": 14, "groupByDay": true, "feeds": ["personal", "work"] }
+    },
+    { "id": "status",   "type": "status",          "pos": { "col": 0, "row": 15, "colSpan": 12, "rowSpan": 1 } }
+  ],
+
+  "update": { "enabled": true, "repo": "dustinahudson/magic-mirror", "channel": "stable" },
+  "web":    { "enabled": true, "listen": ":80" }
+}

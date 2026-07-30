@@ -124,8 +124,10 @@ func Default() Config {
 			{ID: "clock", Type: "datetime", Pos: layout.Pos{Col: 0, Row: 0, ColSpan: 5, RowSpan: 3}},
 			{ID: "weather", Type: "weather", Pos: layout.Pos{Col: 7, Row: 0, ColSpan: 5, RowSpan: 3}},
 			{ID: "forecast", Type: "forecast", Pos: layout.Pos{Col: 7, Row: 3, ColSpan: 5, RowSpan: 4}},
-			{ID: "calendar", Type: "calendar", Pos: layout.Pos{Col: 0, Row: 8, ColSpan: 6, RowSpan: 8}},
-			{ID: "events", Type: "upcoming_events", Pos: layout.Pos{Col: 6, Row: 8, ColSpan: 6, RowSpan: 8}},
+			// Rows 8-14; the status bar owns row 15. Overlapping it would
+			// let the bar clear the calendar's final week.
+			{ID: "calendar", Type: "calendar", Pos: layout.Pos{Col: 0, Row: 8, ColSpan: 6, RowSpan: 7}},
+			{ID: "events", Type: "upcoming_events", Pos: layout.Pos{Col: 6, Row: 8, ColSpan: 6, RowSpan: 7}},
 			{ID: "status", Type: "status", Pos: layout.Pos{Col: 0, Row: 15, ColSpan: 12, RowSpan: 1}},
 		},
 	}
