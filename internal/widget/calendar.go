@@ -194,9 +194,9 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 	y += titleFace.Height() + 8
 
 	colW := bounds.Dx() / 7
+	headerPad := clampInt(colW/16, 3, 10)
 	for i, h := range dayHeaders(w.mondayFirst()) {
-		hw := dowFace.Measure(h)
-		dowFace.DrawTop(dst, bounds.Min.X+i*colW+colW/2-hw/2, y, h, render.Muted)
+		dowFace.DrawTop(dst, bounds.Min.X+i*colW+headerPad, y, h, render.Muted)
 	}
 	y += dowFace.Height() + 6
 
@@ -218,6 +218,10 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 		dotBand = dotRadius*2 + 3
 	}
 
+	// v1 used pad_all(6) inside each cell; scaled here so it holds up at
+	// whatever size the tile ends up.
+	pad := clampInt(colW/16, 3, 10)
+
 	for i := range rows * 7 {
 		date := start.AddDate(0, 0, i)
 		col, row := i%7, i/7
@@ -233,8 +237,6 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 		if cy >= bounds.Max.Y {
 			break
 		}
-		cx := bounds.Min.X + col*colW + colW/2
-
 		key := date.Format("2006-01-02")
 		isToday := key == today
 
@@ -250,27 +252,31 @@ func (w *Calendar) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 			label = date.Format("Jan 2")
 		}
 
-		lw := face.Measure(label)
-		textY := cy + (rowH-dotBand-face.Height())/2
-
 		// Today is a filled cell with light blue numerals, which is what v1
 		// did (calendar_widget.cpp:240): bg rgb(50,50,55), text
 		// rgb(100,200,255). A white disc with knocked-out text reads as a
 		// selection control rather than a date, and on a mirror the softer
 		// fill sits back where it belongs.
+		cell := image.Rect(
+			bounds.Min.X+col*colW, cy,
+			bounds.Min.X+(col+1)*colW, min(cy+rowH, bounds.Max.Y),
+		)
 		if isToday {
-			cell := image.Rect(
-				bounds.Min.X+col*colW, cy,
-				bounds.Min.X+(col+1)*colW, min(cy+rowH, bounds.Max.Y),
-			)
 			render.Fill(dst, cell.Inset(2), render.CalendarTodayBG)
 		}
-		face.DrawTop(dst, cx-lw/2, textY, label, fg)
 
-		if dotBand > 0 && len(byDay[key]) > 0 && !isToday {
+		// The number sits at the cell's top-left, as v1 had it: cells were a
+		// flex column with pad_all(6), so the date led and events stacked
+		// beneath it. Centring the number leaves nowhere for anything else
+		// to go.
+		textX := cell.Min.X + pad
+		textY := cy + pad
+		face.DrawTop(dst, textX, textY, label, fg)
+
+		if dotBand > 0 && len(byDay[key]) > 0 {
 			dotY := textY + face.Height() + dotRadius
 			if dotY+dotRadius <= bounds.Max.Y {
-				w.drawDots(dst, byDay[key], cx, dotY, dotRadius)
+				w.drawDots(dst, byDay[key], textX+dotRadius, dotY, dotRadius)
 			}
 		}
 	}
