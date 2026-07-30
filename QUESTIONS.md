@@ -195,7 +195,7 @@ Everything below was verified on the host.
 | 5 | Store + sources | Verified against live Open-Meteo |
 | 6 | All widgets | Verified against a live Google Calendar feed |
 | 7 | Config web UI | Verified |
-| 8 | AP provisioning portal | Logic + tests done; **no HTTP portal page yet** |
+| 8 | AP provisioning portal | Portal page + captive-portal probes now written; **never exercised on a radio** |
 | 9 | Two-tier update + migrate.sh | Verified (fake release server) |
 | 10 | Size and boot time | Not started |
 
@@ -209,14 +209,15 @@ Everything below was verified on the host.
 2. **Nothing has booted.** The framebuffer format detection, the SDIO/WiFi
    assumptions, `bcm2708_fb` inheriting the firmware's HDMI mode, and the
    ~10s boot estimate are all reasoned rather than observed.
-3. **`internal/provision` has no portal page.** The AP lifecycle, scanning,
-   credential writing and teardown are implemented and tested; the HTML
-   page and its handlers are not written. It will not do anything useful
-   until they are.
+3. **The AP portal has never run on a radio.** The lifecycle, scan
+   parsing, portal page, captive-portal probe responses and credential
+   writing are all implemented and unit-tested, but hostapd and dnsmasq
+   have never actually been started by this code. Nothing wires the portal
+   into main() yet either — it needs the "no known network after N
+   seconds" trigger.
 
 ### Smaller gaps
 
-- `scripts/write-card.sh` is referenced by `make card` but does not exist.
 - `scripts/release.sh` still builds v1 artifacts and needs rewriting for the
   two-tier asset layout (`magicmirror-armv6`, `kernel.img`, `SHA256SUMS`).
 - The OS-tier boot-counter rollback in the initramfs `/init` (DESIGN.md
