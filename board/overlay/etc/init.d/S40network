@@ -25,6 +25,15 @@ say() {
 
 case "$1" in
   start)
+    # Sanity-check the pseudo-filesystems before trusting anything below.
+    #
+    # Every interface check here reads /sys, and modprobe reads /proc. When
+    # they were missing, this script confidently reported "wlan0 never
+    # appeared" while the radio was up and running firmware — the most
+    # misleading possible message. Say so plainly instead.
+    [ -d /proc/self ] || say "WARNING /proc is not mounted; module state is unreadable"
+    [ -d /sys/class ] || say "WARNING /sys is not mounted; interface detection cannot work"
+
     # Load the radio driver explicitly.
     #
     # Nothing else does. There is no udev here, and BusyBox mdev is not
