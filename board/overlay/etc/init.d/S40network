@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# Bring up WiFi.
+#
+# Deliberately thin: this script only performs the initial association.
+# Keeping the link alive is the application's job (internal/netmon), because
+# recovery needs to escalate — reassociate, restart the supplicant, reload the
+# driver, and only then reboot. v1 went straight to reboot, and when that did
+# not take, the only remaining tool was the power cable.
+
+BOOT=/boot
+WPA_CONF="$BOOT/wpa_supplicant.conf"
+RUNTIME_CONF=/var/run/wpa_supplicant.conf
+IFACE=wlan0
+
+case "$1" in
+  start)
+    # Wait for the driver to create the interface.
+    for i in $(seq 1 50); do
+      [ -d "/sys/class/net/$IFACE" ] && break
+      usleep 100000
+    done
+
+    if [ ! -d "/sys/class/net/$IFACE" ]; then
+      echo "network: $IFACE never appeared; brcmfmac may have failed to load"
+      exit 0
+    fi
+
+    ip link set "$IFACE" up
+
+    if [ ! -f "$WPA_CONF" ]; then
+      # No credentials yet. The app detects this and starts the AP setup
+      # portal, so booting without config is a supported state rather than
+      # an error.
+      echo "network: no $WPA_CONF; leaving $IFACE up for provisioning"
+      exit 0
+    fi
+
+    # Copy to a writable location: the app rewrites credentials via the
+    # config UI, and the FAT partition is the durable copy while /var/run is
+    # what the supplicant actually reads.
+    cp "$WPA_CONF" "$RUNTIME_CONF"
+
+    wpa_supplicant -B -i "$IFACE" -c "$RUNTIME_CONF" -D nl80211
+
+    # DHCP in the background so a slow or absent server never delays boot.
+    # The mirror should be drawing a clock within seconds regardless of
+    # whether it has an address yet.
+    udhcpc -b -i "$IFACE" -x hostname:magicmirror -t 5 -T 3 &
+    ;;
+
+  stop)
+    killall udhcpc 2>/dev/null
+    killall wpa_supplicant 2>/dev/null
+    ip link set "$IFACE" down 2>/dev/null
+    ;;
+
+  restart|reload)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

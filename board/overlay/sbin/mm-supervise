@@ -1,0 +1,100 @@
+#!/bin/sh
+#
+# Supervise the mirror application, with rollback to the previous binary.
+#
+# Run from inittab as `respawn`, so init restarts this script every time it
+# exits. That gives a crashed app a sub-second restart instead of the reboot
+# v1 needed — but a restart loop on a genuinely broken binary would be just
+# as useless as a boot loop, so this script counts failures and reverts.
+#
+# The contract with the application:
+#   - It writes $HEALTH once it has been up long enough to be trusted
+#     (see internal/health). Until then, an exit counts as a failure.
+#   - It exits 0 to request a clean restart, e.g. after installing an update.
+#
+# Rollback triggers after MAX_FAILURES consecutive starts that never reached
+# healthy. That is the safety net for "we shipped a binary that crashes on
+# this hardware", which is otherwise unrecoverable on a headless device.
+
+BOOT=/boot
+CURRENT="$BOOT/mm.current"
+PREVIOUS="$BOOT/mm.previous"
+HEALTH="$BOOT/health"
+FAILURES="$BOOT/failures"
+CONFIG="$BOOT/config.json"
+LOG="$BOOT/logs/mm.log"
+
+MAX_FAILURES=3
+LOG_MAX_BYTES=1048576
+
+log() {
+  echo "$(date '+%Y-%m-%dT%H:%M:%S') mm-supervise: $*" | tee -a "$LOG"
+}
+
+# Keep the log from eventually filling a small FAT partition.
+rotate_log() {
+  [ -f "$LOG" ] || return 0
+  size=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+  if [ "$size" -gt "$LOG_MAX_BYTES" ]; then
+    mv "$LOG" "$LOG.1"
+  fi
+}
+
+read_failures() {
+  if [ -f "$FAILURES" ]; then
+    cat "$FAILURES" 2>/dev/null || echo 0
+  else
+    echo 0
+  fi
+}
+
+rotate_log
+
+if [ ! -x "$CURRENT" ]; then
+  log "no executable at $CURRENT"
+  # Sleep before exiting: init would otherwise respawn us in a tight loop and
+  # make the console unusable for the person trying to fix it.
+  sleep 10
+  exit 1
+fi
+
+fails=$(read_failures)
+
+# Roll back before starting, if the last few attempts never got healthy.
+if [ "$fails" -ge "$MAX_FAILURES" ] && [ -x "$PREVIOUS" ]; then
+  log "reached $fails consecutive failures; rolling back to previous binary"
+  mv "$CURRENT" "$BOOT/mm.failed"
+  mv "$PREVIOUS" "$CURRENT"
+  echo 0 > "$FAILURES"
+  sync
+fi
+
+# Count this attempt up front. The app clears the counter itself once it has
+# been healthy for long enough, so a start that never reaches that point
+# leaves the increment behind — which is exactly the signal we want.
+fails=$(read_failures)
+echo $((fails + 1)) > "$FAILURES"
+rm -f "$HEALTH"
+sync
+
+log "starting $(basename "$CURRENT") (attempt $((fails + 1)))"
+
+"$CURRENT" \
+  -config "$CONFIG" \
+  -fb /dev/fb0 \
+  -state "$BOOT" \
+  >> "$LOG" 2>&1
+
+status=$?
+log "exited with status $status"
+
+# A clean exit is a requested restart (an update installed itself), not a
+# failure. Anything else leaves the counter incremented.
+if [ "$status" -eq 0 ]; then
+  echo 0 > "$FAILURES"
+  sync
+fi
+
+# Brief pause so a crash-on-startup cannot saturate the CPU respawning.
+sleep 2
+exit "$status"

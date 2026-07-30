@@ -1,0 +1,19 @@
+# BusyBox inittab for the Magic Mirror.
+#
+# The whole point of running an init at all is the `respawn` line below: a
+# crashed app restarts in well under a second. In v1 there was nothing beneath
+# the application, so the only recovery mechanism available was a reboot.
+
+::sysinit:/etc/init.d/rcS
+
+# The application, supervised. mm-supervise handles crash counting and
+# rollback to the previous binary; see M9 in DESIGN.md.
+::respawn:/sbin/mm-supervise
+
+# A console on the UART, for when something has gone wrong enough that the
+# screen is not telling you. Costs nothing when nothing is attached.
+console::respawn:/sbin/getty -L console 0 vt100
+
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/rcK
+::shutdown:/bin/umount -a -r

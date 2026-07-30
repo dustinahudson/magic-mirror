@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+# Mount the FAT boot partition and prepare writable state.
+#
+# The FAT partition is the only real filesystem on the device: it holds the
+# kernel, the app binary, the config, and all persistent state. The rootfs
+# itself is a cpio in RAM, so nothing there survives a reboot and nothing
+# there can be corrupted by one.
+
+BOOT_DEV=/dev/mmcblk0p1
+BOOT_MNT=/boot
+
+case "$1" in
+  start)
+    printf 'Mounting boot partition: '
+
+    mkdir -p "$BOOT_MNT"
+
+    # Wait for the SD controller to enumerate. Without this the mount races
+    # the mmc driver on a cold boot and loses about one time in five.
+    for i in $(seq 1 50); do
+      [ -b "$BOOT_DEV" ] && break
+      usleep 100000
+    done
+
+    if ! mount -t vfat -o rw,flush,noatime "$BOOT_DEV" "$BOOT_MNT"; then
+      echo "FAILED"
+      # Carry on booting anyway. A mirror that comes up with no config and
+      # says so on screen is more useful than one that halts — and the
+      # screen is the only diagnostic channel most of the time.
+      exit 0
+    fi
+    echo "OK"
+
+    # `flush` above makes writes hit the card promptly, which matters on a
+    # device people unplug rather than shut down.
+
+    mkdir -p "$BOOT_MNT/logs"
+    ;;
+
+  stop)
+    umount "$BOOT_MNT" 2>/dev/null
+    ;;
+
+  restart|reload)
+    "$0" stop
+    "$0" start
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
