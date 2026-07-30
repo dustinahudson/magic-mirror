@@ -18,7 +18,19 @@
 # is the authorized key from the rootfs overlay, so if that key cannot be
 # read there is no usable auth method at all and connections are refused.
 
-ETCDIR=/etc/dropbear
+# /var/run/dropbear, not /etc/dropbear.
+#
+# Buildroot ships /etc/dropbear as a symlink to /var/run/dropbear, and
+# creates the target in its own init script — which this file replaces. The
+# result was a dangling symlink: `mkdir -p /etc/dropbear` returns EEXIST,
+# which -p suppresses, so it reported success while creating nothing, and
+# dropbearkey then failed with ENOENT writing through it.
+#
+# Naming the real path avoids the whole trap. It is on tmpfs, so it is also
+# a filesystem that can actually hold a 0600 private key — which the FAT
+# partition cannot. The key is ephemeral there and cached to /boot for the
+# next boot.
+ETCDIR=/var/run/dropbear
 CACHE=/boot/dropbear
 KEY=dropbear_ed25519_host_key
 PIDFILE=/var/run/dropbear.pid
@@ -32,7 +44,10 @@ say() {
 
 case "$1" in
   start)
-    mkdir -p "$ETCDIR"
+    if ! mkdir -p "$ETCDIR" 2>/dev/null || [ ! -d "$ETCDIR" ]; then
+      say "FAILED cannot create $ETCDIR"
+      exit 0
+    fi
     chmod 700 "$ETCDIR"
 
     # Restore the cached key if the card has one.
