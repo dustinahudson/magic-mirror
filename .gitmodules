@@ -1,3 +1,0 @@
-[submodule "lib/circle-stdlib"]
-	path = lib/circle-stdlib
-	url = https://github.com/smuehlst/circle-stdlib.git
