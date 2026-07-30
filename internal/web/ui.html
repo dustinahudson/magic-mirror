@@ -1,0 +1,508 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Magic Mirror — configuration</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0d; --panel: #131317; --line: #24242c;
+    --fg: #e6e6ec; --dim: #8b8b96; --faint: #5a5a66;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #6ea8fe;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    padding: .9rem 1.25rem; background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  header .spacer { flex: 1; }
+  main { max-width: 62rem; margin: 0 auto; padding: 1.25rem; }
+  section { margin-bottom: 2rem; }
+  h2 {
+    font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0 0 .75rem; font-weight: 600;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem; margin-bottom: .75rem;
+  }
+  .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: .3rem; flex: 1 1 12rem; }
+  .field label { font-size: .8rem; color: var(--dim); }
+  .field .help { font-size: .75rem; color: var(--faint); }
+  input, select, textarea {
+    background: #0e0e12; color: var(--fg);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: .45rem .6rem; font: inherit; font-size: .9rem; width: 100%;
+  }
+  input[type=checkbox] { width: auto; accent-color: var(--accent); }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: #1d1d24; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: .45rem .85rem; font: inherit; font-size: .875rem;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--faint); }
+  button.primary { background: var(--accent); color: #06111f; border-color: transparent; font-weight: 600; }
+  button.danger  { color: var(--err); }
+  .widget-head {
+    display: flex; align-items: center; gap: .6rem; margin-bottom: .75rem;
+    padding-bottom: .6rem; border-bottom: 1px solid var(--line);
+  }
+  .widget-head strong { font-size: .95rem; }
+  .widget-head code { color: var(--faint); font-size: .8rem; }
+  .pos { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; max-width: 22rem; }
+  .pos label { font-size: .7rem; }
+  #toast {
+    position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+    padding: .7rem 1.1rem; border-radius: 8px; font-size: .875rem;
+    border: 1px solid var(--line); background: var(--panel);
+    max-width: min(46rem, 92vw); display: none; white-space: pre-wrap;
+  }
+  #toast.ok   { border-color: var(--ok);   color: var(--ok); }
+  #toast.err  { border-color: var(--err);  color: var(--err); }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
+  .status-grid { display: grid; gap: .4rem; }
+  .status-row {
+    display: flex; gap: .75rem; align-items: baseline;
+    padding: .5rem .7rem; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; font-size: .85rem;
+  }
+  .status-row .key { font-weight: 600; min-width: 7rem; }
+  .badge { font-size: .7rem; padding: .1rem .45rem; border-radius: 999px; border: 1px solid; }
+  .badge.fresh  { color: var(--ok);   border-color: var(--ok); }
+  .badge.stale  { color: var(--warn); border-color: var(--warn); }
+  .badge.failed { color: var(--err);  border-color: var(--err); }
+  .badge.never  { color: var(--faint);border-color: var(--faint); }
+  .status-row .err { color: var(--err); font-size: .78rem; }
+  .grid-preview {
+    display: grid; gap: 2px; background: var(--line); border: 1px solid var(--line);
+    border-radius: 6px; overflow: hidden; aspect-ratio: 16/9; margin-bottom: .75rem;
+  }
+  .grid-preview .cell { background: var(--bg); }
+  .grid-preview .tile {
+    background: #23283a; border: 1px solid var(--accent); border-radius: 3px;
+    font-size: .6rem; color: var(--accent); padding: 1px 3px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+  }
+  .muted { color: var(--faint); font-size: .8rem; }
+</style>
+
+<header>
+  <h1>Magic Mirror</h1>
+  <span class="muted" id="version"></span>
+  <span class="spacer"></span>
+  <button id="reload">Reload</button>
+  <button id="save" class="primary">Save &amp; apply</button>
+</header>
+
+<main>
+  <section>
+    <h2>Source health</h2>
+    <div class="status-grid" id="status"></div>
+  </section>
+
+  <section>
+    <h2>General</h2>
+    <div class="card">
+      <div class="row">
+        <div class="field">
+          <label for="timezone">Timezone</label>
+          <input id="timezone" placeholder="America/Chicago">
+        </div>
+        <div class="field">
+          <label for="units">Units</label>
+          <select id="units">
+            <option value="imperial">Imperial (°F, mph)</option>
+            <option value="metric">Metric (°C, km/h)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="zipcode">Weather location</label>
+          <input id="zipcode" placeholder="64111">
+          <span class="help">Postal code or place name, resolved via Open-Meteo.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Calendars</h2>
+    <p class="muted">
+      Feeds are defined once here and referenced by widgets, so a URL lives in
+      one place and is fetched once however many widgets show it.
+    </p>
+    <div id="calendars"></div>
+    <button id="add-calendar">Add calendar</button>
+  </section>
+
+  <section>
+    <h2>Layout</h2>
+    <div class="grid-preview" id="preview"></div>
+    <p class="muted" id="layout-note"></p>
+  </section>
+
+  <section>
+    <h2>Widgets</h2>
+    <div id="widgets"></div>
+    <div class="row" style="margin-top:.75rem">
+      <select id="new-widget-type" style="flex:0 1 16rem"></select>
+      <button id="add-widget">Add widget</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+let config = null;
+let types = [];
+
+const $ = id => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null) n.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null) continue;
+    n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return n;
+};
+
+function toast(msg, kind = 'ok') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = kind;
+  t.style.display = 'block';
+  clearTimeout(toast._timer);
+  // Errors stay long enough to actually read; successes get out of the way.
+  toast._timer = setTimeout(() => { t.style.display = 'none'; },
+    kind === 'err' ? 12000 : 3500);
+}
+
+async function load() {
+  const [c, t] = await Promise.all([
+    fetch('/api/config').then(r => r.json()),
+    fetch('/api/widget-types').then(r => r.json()),
+  ]);
+  config = c;
+  types = t || [];
+  renderAll();
+  refreshStatus();
+}
+
+function renderAll() {
+  $('timezone').value = config.timezone || '';
+  $('units').value = config.units || 'imperial';
+  $('zipcode').value = (config.weather && config.weather.zipcode) || '';
+
+  $('new-widget-type').replaceChildren(
+    ...types.map(t => el('option', { value: t.type }, t.name)));
+
+  renderCalendars();
+  renderWidgets();
+  renderPreview();
+}
+
+/* ---------- calendars ---------- */
+
+function renderCalendars() {
+  const host = $('calendars');
+  host.replaceChildren();
+
+  (config.calendars || []).forEach((feed, i) => {
+    host.append(el('div', { class: 'card' },
+      el('div', { class: 'row' },
+        field('ID', el('input', {
+          value: feed.id || '',
+          oninput: e => { feed.id = e.target.value; renderWidgets(); },
+        }), 'Referenced by widgets. Changing it unlinks them.'),
+        field('Name', el('input', {
+          value: feed.name || '',
+          oninput: e => { feed.name = e.target.value; },
+        })),
+        field('Colour', el('input', {
+          type: 'color', value: feed.color || '#52FA7F',
+          oninput: e => { feed.color = e.target.value; },
+        })),
+      ),
+      el('div', { class: 'row', style: 'margin-top:.6rem' },
+        field('ICS URL', el('input', {
+          value: feed.url || '', placeholder: 'https://…/basic.ics',
+          oninput: e => { feed.url = e.target.value; },
+        }), 'Treat this like a password — it grants read access to the calendar.'),
+        el('button', {
+          class: 'danger',
+          onclick: () => { config.calendars.splice(i, 1); renderCalendars(); renderWidgets(); },
+        }, 'Remove'),
+      ),
+    ));
+  });
+}
+
+function field(label, input, help) {
+  return el('div', { class: 'field' },
+    el('label', {}, label),
+    input,
+    help ? el('span', { class: 'help' }, help) : null);
+}
+
+/* ---------- widgets ---------- */
+
+function renderWidgets() {
+  const host = $('widgets');
+  host.replaceChildren();
+
+  (config.widgets || []).forEach((inst, i) => {
+    const desc = types.find(t => t.type === inst.type);
+
+    host.append(el('div', { class: 'card' },
+      el('div', { class: 'widget-head' },
+        el('strong', {}, desc ? desc.name : inst.type),
+        el('code', {}, inst.id),
+        !desc ? el('span', { class: 'badge failed' }, 'unknown type') : null,
+        el('span', { class: 'spacer', style: 'flex:1' }),
+        el('button', {
+          class: 'danger',
+          onclick: () => { config.widgets.splice(i, 1); renderWidgets(); renderPreview(); },
+        }, 'Remove'),
+      ),
+
+      el('div', { class: 'row' },
+        field('ID', el('input', {
+          value: inst.id || '',
+          oninput: e => { inst.id = e.target.value; },
+        })),
+      ),
+
+      el('div', { class: 'pos', style: 'margin-top:.6rem' },
+        ...['col', 'row', 'colSpan', 'rowSpan'].map(k =>
+          el('div', { class: 'field' },
+            el('label', {}, k),
+            el('input', {
+              type: 'number', min: 0, value: (inst.pos && inst.pos[k]) ?? 0,
+              oninput: e => {
+                inst.pos = inst.pos || {};
+                inst.pos[k] = parseInt(e.target.value, 10) || 0;
+                renderPreview();
+              },
+            }))),
+      ),
+
+      // Every field below is generated from the widget's own descriptor.
+      // Adding a widget type in Go requires no change to this file.
+      desc && desc.fields && desc.fields.length
+        ? el('div', { class: 'row', style: 'margin-top:.75rem' },
+            ...desc.fields.map(f => renderField(inst, f)))
+        : null,
+    ));
+  });
+}
+
+function renderField(inst, f) {
+  inst.config = inst.config || {};
+  const cur = inst.config[f.key] !== undefined ? inst.config[f.key] : f.default;
+  const set = v => { inst.config[f.key] = v; };
+
+  let input;
+  switch (f.type) {
+    case 'bool':
+      input = el('input', {
+        type: 'checkbox', ...(cur ? { checked: 'checked' } : {}),
+        onchange: e => set(e.target.checked),
+      });
+      break;
+
+    case 'number':
+      input = el('input', {
+        type: 'number',
+        value: cur ?? '',
+        ...(f.min !== undefined ? { min: f.min } : {}),
+        ...(f.max !== undefined ? { max: f.max } : {}),
+        oninput: e => set(parseFloat(e.target.value)),
+      });
+      break;
+
+    case 'select':
+      input = el('select', { onchange: e => set(e.target.value) },
+        ...(f.options || []).map(o =>
+          el('option', { value: o.value, ...(o.value === cur ? { selected: 'selected' } : {}) },
+            o.label)));
+      break;
+
+    case 'color':
+      input = el('input', {
+        type: 'color', value: cur || '#ffffff',
+        oninput: e => set(e.target.value),
+      });
+      break;
+
+    case 'feeds': {
+      // Multi-select over the configured feeds, by id.
+      const selected = new Set(Array.isArray(cur) ? cur : []);
+      input = el('div', {},
+        ...(config.calendars || []).map(feed =>
+          el('label', { style: 'display:flex;gap:.4rem;align-items:center;font-size:.85rem' },
+            el('input', {
+              type: 'checkbox',
+              ...(selected.has(feed.id) ? { checked: 'checked' } : {}),
+              onchange: e => {
+                if (e.target.checked) selected.add(feed.id);
+                else selected.delete(feed.id);
+                set([...selected]);
+              },
+            }),
+            feed.name || feed.id || '(unnamed)')),
+        (config.calendars || []).length ? null
+          : el('span', { class: 'help' }, 'No calendars configured yet.'));
+      break;
+    }
+
+    default:
+      input = el('input', {
+        type: f.type === 'url' ? 'url' : 'text',
+        value: cur ?? '',
+        oninput: e => set(e.target.value),
+      });
+  }
+
+  return field(f.label || f.key, input, f.help);
+}
+
+/* ---------- layout preview ---------- */
+
+function renderPreview() {
+  const cols = (config.layout && config.layout.cols) || 12;
+  const rows = (config.layout && config.layout.rows) || 16;
+
+  const host = $('preview');
+  host.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  host.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  host.replaceChildren();
+
+  for (let i = 0; i < cols * rows; i++) host.append(el('div', { class: 'cell' }));
+
+  const overlaps = [];
+  (config.widgets || []).forEach((w, i) => {
+    const p = w.pos || {};
+    const c = (p.col | 0) + 1, r = (p.row | 0) + 1;
+    const cs = Math.max(1, p.colSpan | 0), rs = Math.max(1, p.rowSpan | 0);
+
+    host.append(el('div', {
+      class: 'tile',
+      style: `grid-column:${c}/span ${cs};grid-row:${r}/span ${rs}`,
+      title: `${w.id} (${w.type})`,
+    }, w.id));
+
+    for (const other of (config.widgets || []).slice(i + 1)) {
+      const q = other.pos || {};
+      const ax2 = (p.col | 0) + cs, ay2 = (p.row | 0) + rs;
+      const bx2 = (q.col | 0) + Math.max(1, q.colSpan | 0);
+      const by2 = (q.row | 0) + Math.max(1, q.rowSpan | 0);
+      if ((p.col | 0) < bx2 && (q.col | 0) < ax2 &&
+          (p.row | 0) < by2 && (q.row | 0) < ay2) {
+        overlaps.push(`${w.id} and ${other.id}`);
+      }
+    }
+  });
+
+  $('layout-note').textContent = overlaps.length
+    ? `Overlapping: ${overlaps.join(', ')}. The later widget will paint over the earlier one.`
+    : `${cols}×${rows} grid.`;
+}
+
+/* ---------- status ---------- */
+
+async function refreshStatus() {
+  try {
+    const s = await fetch('/api/status').then(r => r.json());
+    $('version').textContent = s.version || '';
+    const host = $('status');
+    host.replaceChildren(...(s.sources || []).map(src =>
+      el('div', { class: 'status-row' },
+        el('span', { class: 'key' }, src.key),
+        el('span', { class: 'badge ' + src.status }, src.status),
+        src.age ? el('span', { class: 'muted' }, 'updated ' + src.age + ' ago') : null,
+        src.error ? el('span', { class: 'err' }, src.error) : null,
+      )));
+    if (!(s.sources || []).length) {
+      host.replaceChildren(el('p', { class: 'muted' }, 'No sources reporting yet.'));
+    }
+  } catch (e) {
+    // The mirror restarting is normal; keep the last known status on screen.
+  }
+}
+
+/* ---------- actions ---------- */
+
+$('add-calendar').onclick = () => {
+  config.calendars = config.calendars || [];
+  const n = config.calendars.length + 1;
+  config.calendars.push({ id: 'cal' + n, name: 'Calendar ' + n, url: '', color: '#52FA7F' });
+  renderCalendars();
+  renderWidgets();
+};
+
+$('add-widget').onclick = () => {
+  const type = $('new-widget-type').value;
+  const desc = types.find(t => t.type === type);
+  if (!desc) return;
+
+  config.widgets = config.widgets || [];
+  let id = type, n = 1;
+  while (config.widgets.some(w => w.id === id)) id = type + '-' + (++n);
+
+  config.widgets.push({
+    id, type,
+    pos: { col: 0, row: 0, colSpan: desc.defaultSpan.cols, rowSpan: desc.defaultSpan.rows },
+    config: {},
+  });
+  renderWidgets();
+  renderPreview();
+};
+
+$('reload').onclick = () => load().then(() => toast('Reloaded from the mirror'));
+
+$('save').onclick = async () => {
+  config.timezone = $('timezone').value;
+  config.units = $('units').value;
+  config.weather = config.weather || {};
+  config.weather.zipcode = $('zipcode').value;
+
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const body = await res.json();
+
+    if (!res.ok) {
+      toast((body.error || 'Save failed') + (body.note ? '\n' + body.note : ''), 'err');
+      return;
+    }
+    if (body.warnings && body.warnings.length) {
+      toast('Saved, with warnings:\n' + body.warnings.join('\n'), 'warn');
+    } else {
+      toast('Saved and applied');
+    }
+  } catch (e) {
+    toast('Could not reach the mirror: ' + e.message, 'err');
+  }
+};
+
+load();
+setInterval(refreshStatus, 5000);
+</script>
