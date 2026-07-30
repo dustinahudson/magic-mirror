@@ -9,16 +9,15 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
+// Built through New rather than as a literal, so tests exercise the same
+// construction the mirror uses — including the rename channel, which a
+// literal leaves nil and silently drops nudges into.
 func testResponder() *Responder {
-	r := &Responder{
-		Host: "magicmirror",
-		TTL:  120,
-		Log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Addrs: func() []net.IP {
-			return []net.IP{net.IPv4(192, 168, 1, 120)}
-		},
+	r := New("magicmirror", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.TTL = 120
+	r.Addrs = func() []net.IP {
+		return []net.IP{net.IPv4(192, 168, 1, 120)}
 	}
-	r.fqdn = "magicmirror.local."
 	return r
 }
 
@@ -55,7 +54,7 @@ func query(t *testing.T, name string, typ dnsmessage.Type, unicast bool) []byte 
 func answersFor(t *testing.T, r *Responder, ips []net.IP) []dnsmessage.Resource {
 	t.Helper()
 
-	name, err := dnsmessage.NewName(r.fqdn)
+	name, err := dnsmessage.NewName(r.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +145,7 @@ func TestIgnoresOtherNames(t *testing.T) {
 
 		matched := false
 		for _, q := range questions {
-			if equalName(q.Name.String(), r.fqdn) {
+			if equalName(q.Name.String(), r.Name()) {
 				matched = true
 			}
 		}
@@ -252,4 +251,97 @@ func equalName(a, b string) bool {
 		}
 	}
 	return true
+}
+
+// Renaming the mirror from the settings page has to change what it answers
+// to. The responder used to read the hostname once at startup, so a rename
+// saved cleanly and changed nothing until someone power-cycled the device —
+// while the settings page said the new name was already in effect.
+func TestRenameChangesWhatIsAnswered(t *testing.T) {
+	r := testResponder()
+
+	if got := r.Name(); got != "magicmirror.local." {
+		t.Fatalf("Name() = %q", got)
+	}
+
+	r.Rename("magicmirror-2")
+	if got := r.Name(); got != "magicmirror-2.local." {
+		t.Fatalf("after Rename, Name() = %q", got)
+	}
+
+	// The old name must stop being answered, or two names resolve to one
+	// mirror and whichever a browser cached first is the one it keeps.
+	if answers(t, r, "magicmirror.local.") {
+		t.Error("still answering to the old name")
+	}
+	if !answers(t, r, "magicmirror-2.local.") {
+		t.Error("not answering to the new name")
+	}
+}
+
+func TestRenameIgnoresNoOpsAndBlanks(t *testing.T) {
+	r := testResponder()
+
+	r.Rename("")
+	if got := r.Name(); got != "magicmirror.local." {
+		t.Errorf("a blank rename took effect: %q", got)
+	}
+
+	// Case and the .local suffix are normalised, so these are the same name.
+	r.Rename("MagicMirror")
+	if got := r.Name(); got != "magicmirror.local." {
+		t.Errorf("case-only rename changed the name: %q", got)
+	}
+
+	r.Rename("  spaced  ")
+	if got := r.Name(); got != "spaced.local." {
+		t.Errorf("Name() = %q, want trimmed", got)
+	}
+}
+
+// A rename must wake the announcer rather than waiting out half a TTL, and
+// repeated renames must not queue up a burst of announcements.
+func TestRenameNudgesTheAnnouncerOnce(t *testing.T) {
+	r := testResponder()
+
+	r.Rename("magicmirror-2")
+	r.Rename("magicmirror-3")
+	r.Rename("magicmirror-4")
+
+	if got := len(r.rename); got != 1 {
+		t.Errorf("queued %d announcements for three renames, want 1", got)
+	}
+}
+
+// answers reports whether the responder replies to a query for name.
+func answers(t *testing.T, r *Responder, name string) bool {
+	t.Helper()
+	n, err := dnsmessage.NewName(name)
+	if err != nil {
+		t.Fatalf("bad name %q: %v", name, err)
+	}
+	msg := dnsmessage.Message{
+		Questions: []dnsmessage.Question{{
+			Name: n, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET,
+		}},
+	}
+	packet, err := msg.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var p dnsmessage.Parser
+	if _, err := p.Start(packet); err != nil {
+		t.Fatal(err)
+	}
+	qs, err := p.AllQuestions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range qs {
+		if equalName(q.Name.String(), r.Name()) {
+			return true
+		}
+	}
+	return false
 }
