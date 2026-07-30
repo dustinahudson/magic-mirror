@@ -141,7 +141,11 @@ func (c *CalendarSource) Fetch(ctx context.Context) (any, error) {
 }
 
 func (c *CalendarSource) fetchFeed(ctx context.Context, feed Feed, opts ics.Options) ([]ics.Event, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feed.URL, nil)
+	// Normalised at fetch rather than at save: a config written by hand, or
+	// by an older build, gets the same treatment as one typed into the UI.
+	url := ics.NormalizeURL(feed.URL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -155,7 +159,7 @@ func (c *CalendarSource) fetchFeed(ctx context.Context, feed Feed, opts ics.Opti
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, false, &ErrHTTPStatus{URL: redact(feed.URL), Status: resp.StatusCode}
+		return nil, false, &ErrHTTPStatus{URL: redact(url), Status: resp.StatusCode}
 	}
 
 	// Cap the body. A misconfigured URL pointing at something enormous
@@ -184,12 +188,45 @@ func summarise(errs map[string]string) string {
 	return strings.Join(parts, "; ")
 }
 
-// redact strips the query string from a URL before it reaches a log or the
-// screen. Google Calendar "secret address" ICS links are credentials, and a
-// mirror is by definition a display other people can read.
+// redact reduces a feed URL to its scheme and host before it reaches a log,
+// an error message or the screen. A subscription link is a credential —
+// anyone holding it can read the calendar — and a mirror is by definition a
+// display other people can read.
+//
+// Host-only, because every provider puts the secret somewhere different and
+// all of them put it in the path:
+//
+//	https://calendar.google.com/calendar/ical/…/private-<token>/basic.ics
+//	https://p37-calendars.icloud.com/published/2/<token>
+//	https://outlook.office365.com/owa/calendar/<token>/<token>/calendar.ics
+//
+// An earlier version stripped only the query string, on the belief that
+// Google's secret address carried its token there. It does not, and neither
+// does anyone else's, so that redaction protected nothing at all.
+//
+// The host survives because it is the diagnostic worth having — it says
+// which provider is failing — and it is not the secret. Which feed is
+// affected is already reported alongside, by name.
 func redact(raw string) string {
-	if i := strings.IndexByte(raw, '?'); i >= 0 {
-		return raw[:i] + "?…"
+	s := strings.TrimSpace(raw)
+
+	scheme := ""
+	if i := strings.Index(s, "://"); i >= 0 {
+		scheme, s = s[:i+3], s[i+3:]
 	}
-	return raw
+	// Drop any userinfo along with the host's path, query and fragment.
+	if i := strings.IndexByte(s, '@'); i >= 0 {
+		s = s[i+1:]
+	}
+	host := s
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		host = s[:i]
+	}
+	if host == "" {
+		return "(no url)"
+	}
+	if len(host) == len(s) {
+		return scheme + host
+	}
+	return scheme + host + "/…"
 }

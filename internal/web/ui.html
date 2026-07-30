@@ -619,12 +619,21 @@ function renderCalendars() {
 
         el('div', { class: 'field', style: 'flex-basis:100%' },
           el('label', {}, 'Calendar link'),
-          el('input', { value: feed.url || '', placeholder: 'https://calendar.google.com/…/basic.ics',
+          el('input', { value: feed.url || '', placeholder: 'https:// or webcal:// link',
             oninput: e => { feed.url = e.target.value; touch(); } }),
           el('span', { class: 'help', html:
-            'In Google Calendar: <b>Settings → your calendar → Integrate calendar</b>, '
-            + 'then copy the <b>Secret address in iCal format</b>. '
-            + 'Treat it like a password — anyone with the link can read the calendar.' })),
+            'Paste the sharing link exactly as your calendar gives it to you — '
+            + '<code>webcal://</code> links work.'
+            + '<ul style="margin:.4rem 0 0;padding-left:1.1rem">'
+            + '<li><b>Google:</b> Settings → your calendar → Integrate calendar → '
+            + '<b>Secret address in iCal format</b></li>'
+            + '<li><b>Apple / iCloud:</b> Calendar → share icon beside the calendar → '
+            + 'tick <b>Public Calendar</b> → <b>Copy Link</b></li>'
+            + '<li><b>Outlook:</b> Settings → Calendar → Shared calendars → '
+            + '<b>Publish a calendar</b> → the <b>ICS</b> link</li>'
+            + '</ul>'
+            + '<div style="margin-top:.4rem">Treat the link like a password — anyone '
+            + 'who has it can read the calendar.</div>' })),
 
         el('div', { class: 'field' },
           el('label', {}, 'Colour on the mirror'),
