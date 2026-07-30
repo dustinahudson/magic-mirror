@@ -177,3 +177,51 @@ with a note in the README** — but this is your network, so your call.
 - **Moon phase icons.** `assets/icons/` has eight moon phase PNGs that
   nothing currently uses; v1 had them for a widget it never shipped. Worth a
   `moon` widget later if you want one.
+
+---
+
+## 6. Status at handoff
+
+Milestones 1-9 are implemented; M10 (size and boot-time tuning) is not
+started, and **nothing has been booted on real hardware** — I have no Pi.
+Everything below was verified on the host.
+
+| M | What | State |
+|---|---|---|
+| 1 | Buildroot external tree, init, boot files | Written, **unbuilt** — `make image` has never run |
+| 2 | Display backends + live preview | Verified |
+| 3 | Render, layout, glyph cache, registry, clock | Verified |
+| 4 | WiFi recovery ladder | Verified (injected runner) |
+| 5 | Store + sources | Verified against live Open-Meteo |
+| 6 | All widgets | Verified against a live Google Calendar feed |
+| 7 | Config web UI | Verified |
+| 8 | AP provisioning portal | Logic + tests done; **no HTTP portal page yet** |
+| 9 | Two-tier update + migrate.sh | Verified (fake release server) |
+| 10 | Size and boot time | Not started |
+
+### The three things I could not verify
+
+1. **`make image` has never been run.** The defconfig, kernel fragment and
+   post-image script are written from knowledge of Buildroot, not from a
+   successful build. Expect to iterate on package names and kernel symbols
+   the first time — that is normal for a new board config, but it means
+   "M1 complete" is not yet true.
+2. **Nothing has booted.** The framebuffer format detection, the SDIO/WiFi
+   assumptions, `bcm2708_fb` inheriting the firmware's HDMI mode, and the
+   ~10s boot estimate are all reasoned rather than observed.
+3. **`internal/provision` has no portal page.** The AP lifecycle, scanning,
+   credential writing and teardown are implemented and tested; the HTML
+   page and its handlers are not written. It will not do anything useful
+   until they are.
+
+### Smaller gaps
+
+- `scripts/write-card.sh` is referenced by `make card` but does not exist.
+- `scripts/release.sh` still builds v1 artifacts and needs rewriting for the
+  two-tier asset layout (`magicmirror-armv6`, `kernel.img`, `SHA256SUMS`).
+- The OS-tier boot-counter rollback in the initramfs `/init` (DESIGN.md
+  describes it) is not implemented — `internal/update` keeps
+  `kernel.prev.img`, but nothing yet restores it automatically after a
+  failed boot.
+- No golden-PNG layout tests, though the PNG backend that would drive them
+  exists.
