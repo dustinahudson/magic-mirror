@@ -24,6 +24,7 @@ func init() {
 			{Key: "showFeelsLike", Label: "Show \"feels like\"", Type: FieldBool, Default: true},
 			{Key: "showWind", Label: "Show wind", Type: FieldBool, Default: true},
 			{Key: "showSun", Label: "Show sunrise/sunset", Type: FieldBool, Default: true},
+			{Key: "showMoon", Label: "Show moon phase", Type: FieldBool, Default: true},
 			{Key: "showLocation", Label: "Show location name", Type: FieldBool, Default: true},
 			{
 				Key: "tempSize", Label: "Temperature size (px)", Type: FieldNumber,
@@ -38,6 +39,7 @@ type weatherConfig struct {
 	ShowFeelsLike bool `json:"showFeelsLike"`
 	ShowWind      bool `json:"showWind"`
 	ShowSun       bool `json:"showSun"`
+	ShowMoon      bool `json:"showMoon"`
 	ShowLocation  bool `json:"showLocation"`
 	TempSize      int  `json:"tempSize"`
 }
@@ -56,6 +58,7 @@ func newWeather(raw json.RawMessage) (Widget, error) {
 		ShowFeelsLike: true,
 		ShowWind:      true,
 		ShowSun:       true,
+		ShowMoon:      true,
 		ShowLocation:  true,
 		TempSize:      88,
 	}
@@ -82,9 +85,10 @@ func (w *Weather) Key(ctx Context) string {
 	if !ok {
 		return "weather|none|" + st.Key()
 	}
-	return fmt.Sprintf("weather|%.0f|%.0f|%d|%.0f|%d|%s|%s|%s",
-		c.Temperature, c.FeelsLike, c.Humidity, c.WindSpeed, c.Code,
-		c.City, st.Key(), degreeUnit(c.Metric))
+	return fmt.Sprintf("weather|%.0f|%.0f|%d|%.0f|%d|%d|%s|%s|%s|%s|%d",
+		c.Temperature, c.FeelsLike, c.Humidity, c.WindSpeed, c.WindDirection, c.Code,
+		c.City, st.Key(), degreeUnit(c.Metric),
+		c.Sunrise.Format("15:04")+c.Sunset.Format("15:04"), int(c.Moon))
 }
 
 func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
@@ -121,15 +125,32 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 		y += subFace.Height() + 4
 	}
 
-	// Temperature, with the icon to its right.
+	// Wind, sun times and moon phase, on one row above the temperature —
+	// the arrangement v1 used (a flex row of wind, sunrise, and the moon
+	// beside sunset, all at one size).
+	//
+	// Drawn before the temperature so it gets its space first: the
+	// temperature is the one element that can shrink without losing
+	// information, since the number stays legible at any size.
+	if ok {
+		y = w.drawDetailRow(dst, image.Rect(x, y, bounds.Max.X, bounds.Max.Y), ctx, cond, smallFace)
+	}
+
+	// Temperature, with the icon to its right. Refit to whatever vertical
+	// space the detail row left.
 	temp := Placeholder
 	if ok {
 		temp = fmt.Sprintf("%.0f%s", cond.Temperature, degreeUnit(cond.Metric))
 	}
+	if f, err := ctx.Fonts.FitFace(render.Light, w.cfg.TempSize,
+		temp+"  ", bounds.Dx()*3/4, bounds.Max.Y-y); err == nil {
+		tempFace = f
+	}
+
 	tempEnd := tempFace.DrawTop(dst, x, y, temp, render.Primary)
 
 	if ok {
-		iconSize := w.cfg.TempSize
+		iconSize := min(tempFace.Size(), bounds.Max.Y-y)
 		if icon, found := render.Icon(cond.Icon(), iconSize, iconSize); found {
 			pt := image.Pt(tempEnd+subSize/2, y+(tempFace.Height()-icon.Bounds().Dy())/2)
 			if pt.X+icon.Bounds().Dx() <= bounds.Max.X {
@@ -139,43 +160,18 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 	}
 	y += tempFace.Height()
 
-	// Condition description.
+	// Condition, and "feels like" beside it — v1 kept feels-like on its own
+	// line below the temperature.
 	desc := Placeholder
 	if ok {
 		desc = cond.Condition()
-	}
-	subFace.DrawTop(dst, x, y, subFace.Truncate(desc, bounds.Dx()), render.Secondary)
-	y += subFace.Height() + 6
-
-	// Detail lines. Each is omitted entirely rather than shown with a
-	// placeholder value — a wind speed of "—" tells you nothing a missing
-	// line does not.
-	var details []string
-	if ok {
 		if w.cfg.ShowFeelsLike {
-			details = append(details,
-				fmt.Sprintf("Feels %.0f%s", cond.FeelsLike, degreeUnit(cond.Metric)))
-		}
-		if w.cfg.ShowWind {
-			details = append(details,
-				fmt.Sprintf("Wind %.0f %s %s", cond.WindSpeed, speedUnit(cond.Metric),
-					compass(cond.WindDirection)))
-		}
-		if w.cfg.ShowSun && !cond.Sunset.IsZero() {
-			sun := "Sunset " + cond.Sunset.In(ctx.Location()).Format("3:04pm")
-			if ctx.Now.Before(cond.Sunrise) && !cond.Sunrise.IsZero() {
-				sun = "Sunrise " + cond.Sunrise.In(ctx.Location()).Format("3:04pm")
-			}
-			details = append(details, sun)
+			desc += fmt.Sprintf("   feels %.0f%s", cond.FeelsLike, degreeUnit(cond.Metric))
 		}
 	}
-
-	for _, line := range details {
-		if y+smallFace.Height() > bounds.Max.Y {
-			break
-		}
-		smallFace.DrawTop(dst, x, y, smallFace.Truncate(line, bounds.Dx()), render.Muted)
-		y += smallFace.Height() + 2
+	if y+subFace.Height() <= bounds.Max.Y {
+		subFace.DrawTop(dst, x, y, subFace.Truncate(desc, bounds.Dx()), render.Secondary)
+		y += subFace.Height()
 	}
 
 	// When there is genuinely nothing, say why rather than leaving a void.
@@ -183,6 +179,67 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 		msg := firstLine(st.Err.Error())
 		smallFace.DrawTop(dst, x, y, smallFace.Truncate(msg, bounds.Dx()), render.Faint)
 	}
+}
+
+// drawDetailRow renders wind, sunrise/sunset and the moon phase on one line,
+// returning the y below it.
+//
+// v1 drew each with its own icon; only the moon artwork survives as a PNG,
+// so wind and the sun times are labelled with arrows instead. The moon keeps
+// its icon because the phase is inherently a picture — "Waxing Gibbous" in
+// words is a poor substitute for the shape.
+func (w *Weather) drawDetailRow(dst *image.RGBA, area image.Rectangle, ctx Context, cond source.Conditions, face *render.Face) int {
+	type part struct {
+		text string
+		icon string
+	}
+	var parts []part
+
+	if w.cfg.ShowWind {
+		parts = append(parts, part{text: fmt.Sprintf("%s %.0f %s",
+			compass(cond.WindDirection), cond.WindSpeed, speedUnit(cond.Metric))})
+	}
+	if w.cfg.ShowSun {
+		loc := ctx.Location()
+		if !cond.Sunrise.IsZero() {
+			parts = append(parts, part{text: "↑ " + strings.ToLower(cond.Sunrise.In(loc).Format("3:04pm"))})
+		}
+		if !cond.Sunset.IsZero() {
+			parts = append(parts, part{text: "↓ " + strings.ToLower(cond.Sunset.In(loc).Format("3:04pm"))})
+		}
+	}
+	if w.cfg.ShowMoon && !cond.Sunrise.IsZero() {
+		parts = append(parts, part{text: cond.Moon.Name(), icon: cond.Moon.Icon()})
+	}
+
+	if len(parts) == 0 || area.Dy() < face.Height() {
+		return area.Min.Y
+	}
+
+	iconBox := face.Height()
+	gap := face.Size()
+	x, y := area.Min.X, area.Min.Y
+
+	for i, p := range parts {
+		if i > 0 {
+			x += gap
+		}
+		if p.icon != "" {
+			if icon, found := render.Icon(p.icon, iconBox, iconBox); found {
+				if x+icon.Bounds().Dx() > area.Max.X {
+					break
+				}
+				render.DrawImage(dst, icon, image.Pt(x, y))
+				x += icon.Bounds().Dx() + 4
+			}
+		}
+		if x+face.Measure(p.text) > area.Max.X {
+			break
+		}
+		x = face.DrawTop(dst, x, y, p.text, render.Muted)
+	}
+
+	return y + face.Height() + 4
 }
 
 func degreeUnit(metric bool) string {

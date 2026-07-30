@@ -27,6 +27,7 @@ type Conditions struct {
 	IsDay         bool      `json:"isDay"`
 	Sunrise       time.Time `json:"sunrise"`
 	Sunset        time.Time `json:"sunset"`
+	Moon          MoonPhase `json:"moon"`
 	City          string    `json:"city"`
 	Region        string    `json:"region"`
 	Metric        bool      `json:"metric"`
@@ -168,6 +169,11 @@ func (w *WeatherSource) Fetch(ctx context.Context) (any, error) {
 
 	if len(resp.Daily.Sunrise) > 0 {
 		out.Sunrise, _ = time.ParseInLocation("2006-01-02T15:04", resp.Daily.Sunrise[0], zone)
+		// v1 derived the moon phase from the sunrise date for the same
+		// reason: it is the only local calendar date the response carries.
+		if !out.Sunrise.IsZero() {
+			out.Moon = MoonPhaseOn(out.Sunrise)
+		}
 	}
 	if len(resp.Daily.Sunset) > 0 {
 		out.Sunset, _ = time.ParseInLocation("2006-01-02T15:04", resp.Daily.Sunset[0], zone)
