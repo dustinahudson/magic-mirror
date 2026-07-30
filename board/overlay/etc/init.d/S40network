@@ -12,6 +12,16 @@ BOOT=/boot
 WPA_CONF="$BOOT/wpa_supplicant.conf"
 RUNTIME_CONF=/var/run/wpa_supplicant.conf
 IFACE=wlan0
+NETLOG="$BOOT/logs/network.log"
+
+# Log to the SD card as well as the console. The console is the UART, which
+# is only useful if someone has a serial adapter physically attached — and
+# the times you most need this output are exactly the times nobody does.
+say() {
+  echo "network: $*"
+  mkdir -p "$(dirname "$NETLOG")" 2>/dev/null
+  echo "$(date '+%H:%M:%S') $*" >> "$NETLOG" 2>/dev/null || true
+}
 
 case "$1" in
   start)
@@ -22,10 +32,11 @@ case "$1" in
     # boot wlan0 simply never appeared and every network layer above it
     # failed with no obvious cause.
     if ! grep -q '^brcmfmac ' /proc/modules 2>/dev/null; then
-      if modprobe brcmfmac 2>&1; then
-        echo "network: loaded brcmfmac"
+      out=$(modprobe brcmfmac 2>&1)
+      if [ $? -eq 0 ]; then
+        say "loaded brcmfmac"
       else
-        echo "network: modprobe brcmfmac FAILED — check /lib/modules and firmware"
+        say "modprobe brcmfmac FAILED: $out"
       fi
     fi
 
@@ -36,11 +47,11 @@ case "$1" in
     done
 
     if [ ! -d "/sys/class/net/$IFACE" ]; then
-      echo "network: $IFACE never appeared after loading brcmfmac"
-      echo "network: modules present:"
-      cat /proc/modules 2>/dev/null | awk '{print "  " $1}'
-      echo "network: firmware present:"
-      ls /lib/firmware/brcm/ 2>/dev/null | sed 's/^/  /'
+      say "$IFACE never appeared after loading brcmfmac"
+      say "modules: $(awk '{printf "%s ", $1}' /proc/modules 2>/dev/null)"
+      say "firmware: $(ls /lib/firmware/brcm/ 2>/dev/null | tr '\n' ' ')"
+      say "net devices: $(ls /sys/class/net/ 2>/dev/null | tr '\n' ' ')"
+      say "dmesg brcm: $(dmesg 2>/dev/null | grep -i brcm | tail -5 | tr '\n' '|')"
       exit 0
     fi
 
@@ -50,7 +61,7 @@ case "$1" in
       # No credentials yet. The app detects this and starts the AP setup
       # portal, so booting without config is a supported state rather than
       # an error.
-      echo "network: no $WPA_CONF; leaving $IFACE up for provisioning"
+      say "no $WPA_CONF; leaving $IFACE up for provisioning"
       exit 0
     fi
 

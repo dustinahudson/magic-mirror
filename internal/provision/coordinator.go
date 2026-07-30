@@ -27,6 +27,16 @@ const (
 	// ModePortal means the mirror is acting as an access point and serving
 	// the setup page.
 	ModePortal
+
+	// ModeFailed means the mirror has no network AND could not bring the
+	// setup portal up either.
+	//
+	// This state exists because the first version had no way to express it:
+	// when the portal failed to start, the coordinator silently stayed in
+	// ModeConnecting, the overlay stayed inactive, and the display showed a
+	// normal mirror with no data and no explanation. A device that cannot
+	// help itself must at least say so.
+	ModeFailed
 )
 
 func (m Mode) String() string {
@@ -35,6 +45,8 @@ func (m Mode) String() string {
 		return "connected"
 	case ModePortal:
 		return "portal"
+	case ModeFailed:
+		return "failed"
 	default:
 		return "connecting"
 	}
@@ -51,6 +63,13 @@ type State struct {
 	// screen because "0 networks" and "12 networks" are very different
 	// problems and the difference is invisible otherwise.
 	Networks int
+
+	// Err explains a ModeFailed state, and is shown on screen.
+	Err string
+
+	// Iface is the interface being used, included so the failure screen can
+	// say whether it exists at all.
+	Iface string
 
 	Since time.Time
 }
@@ -205,6 +224,11 @@ func (c *Coordinator) Run(ctx context.Context) {
 
 		if err := c.runPortal(ctx); err != nil {
 			c.Log.Error("setup portal failed", "err", err)
+			// Say so on screen. Silently retrying leaves a mirror that
+			// shows no data and offers no explanation, which is
+			// indistinguishable from broken hardware.
+			c.setState(State{Mode: ModeFailed, Err: err.Error()})
+
 			// Back off before retrying so a broken radio does not spin.
 			select {
 			case <-ctx.Done():

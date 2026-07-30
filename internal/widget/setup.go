@@ -24,10 +24,17 @@ type Setup struct{}
 // show through.
 func (s *Setup) Key(ctx Context) string {
 	st, ok := s.state(ctx)
-	if !ok || st.Mode != provision.ModePortal {
+	if !ok {
 		return ""
 	}
-	return fmt.Sprintf("setup|%s|%s|%d", st.SSID, st.URL, st.Networks)
+	switch st.Mode {
+	case provision.ModePortal:
+		return fmt.Sprintf("setup|%s|%s|%d", st.SSID, st.URL, st.Networks)
+	case provision.ModeFailed:
+		return "failed|" + st.Err
+	default:
+		return ""
+	}
 }
 
 func (s *Setup) state(ctx Context) (provision.State, bool) {
@@ -71,6 +78,23 @@ func (s *Setup) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 		w := f.Measure(s)
 		f.DrawTop(dst, cx-w/2, y, s, c)
 		y += f.Height()
+	}
+
+	if st.Mode == provision.ModeFailed {
+		center(title, "No network", render.Primary)
+		y += titleSize / 2
+		center(step, "The mirror could not join a network,", render.Secondary)
+		center(step, "and could not start its own setup network either.", render.Secondary)
+		y += stepSize / 2
+
+		for _, line := range note.Wrap(st.Err, bounds.Dx()*3/4, 3) {
+			center(note, line, render.Warn)
+		}
+
+		y += stepSize
+		center(note, "Put a wpa_supplicant.conf on the SD card to configure Wi-Fi directly.", render.Muted)
+		center(note, "Serial console is on the UART at 115200 baud.", render.Faint)
+		return
 	}
 
 	center(title, "Wi-Fi setup", render.Primary)
