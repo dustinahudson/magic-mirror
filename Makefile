@@ -136,6 +136,16 @@ logs:
 shell:
 	ssh root@$(MIRROR)
 
+# --- Release ---
+#
+# Test builds are the default. A stable release goes to every mirror on the
+# default channel, so it takes saying STABLE=1 out loud.
+
+.PHONY: release
+release:
+	@test -n "$(TAG)" || (echo "usage: make release TAG=v0.15.0-rc.1 [STABLE=1] [OS=1]"; exit 1)
+	./scripts/release.sh "$(TAG)" $(if $(STABLE),--stable,) $(if $(OS),--os,)
+
 # --- Card ---
 
 .PHONY: card

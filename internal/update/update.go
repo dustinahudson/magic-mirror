@@ -29,7 +29,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -51,6 +50,34 @@ const (
 	AssetOS        = "kernel.img"
 	AssetChecksums = "SHA256SUMS"
 )
+
+// Update channels.
+//
+// A test build is published as a GitHub pre-release, and the flag is what
+// keeps it away from everyone else. That is not only this updater's rule:
+// the v1 Circle OS firmware still in the field polls /releases/latest, which
+// GitHub defines as excluding pre-releases, so the same flag hides a build
+// from v1 devices too. It matters more there, because v1 unlinks its kernel
+// before writing the new one and takes whichever asset the API lists first —
+// a stable v2 release would hand a v1 device the wrong file and leave it
+// with nothing to boot.
+const (
+	ChannelStable = "stable"
+	ChannelTest   = "test"
+)
+
+// IsTestChannel reports whether c opts a device into test builds.
+//
+// "prerelease" is accepted as well as "test" because that is what the field
+// was originally called, and a config file on a device outlives the name we
+// happened to give a setting.
+func IsTestChannel(c string) bool {
+	switch strings.ToLower(strings.TrimSpace(c)) {
+	case ChannelTest, "prerelease", "beta":
+		return true
+	}
+	return false
+}
 
 // ShouldInstall reports whether release tag is a genuine upgrade from the
 // running version.
@@ -100,38 +127,31 @@ func IsDevBuild(v string) bool {
 	return false
 }
 
-// parseVersion reads a "vMAJOR.MINOR.PATCH" tag.
-func parseVersion(v string) ([3]int, bool) {
-	var out [3]int
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	// Ignore any pre-release suffix for ordering purposes.
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
-		v = v[:i]
+// LeavingTestChannel reports whether tag is the release a device should take
+// to get back off the test channel.
+//
+// A device that tried a test build sits ahead of stable: v0.15.0-rc.2 is
+// newer than v0.15.0's predecessor, so switching the channel back to stable
+// leaves it stranded on the pre-release until the next version ships. That
+// is the wrong end state for a device someone borrowed for testing, so the
+// matching final release is allowed to install over a pre-release of the
+// same base version even though it is not, by precedence, an upgrade.
+//
+// Only over a pre-release, and only at the same base version: this is a
+// device leaving a test build behind, not a general downgrade path.
+func LeavingTestChannel(current, tag string) bool {
+	if IsDevBuild(current) {
+		return false
 	}
-	parts := strings.Split(v, ".")
-	if len(parts) != 3 {
-		return out, false
+	cur, ok := parseVersion(current)
+	if !ok || !cur.isPrerelease() {
+		return false
 	}
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
-			return out, false
-		}
-		out[i] = n
+	next, ok := parseVersion(tag)
+	if !ok || next.isPrerelease() {
+		return false
 	}
-	return out, true
-}
-
-func compareVersion(a, b [3]int) int {
-	for i := range 3 {
-		switch {
-		case a[i] > b[i]:
-			return 1
-		case a[i] < b[i]:
-			return -1
-		}
-	}
-	return 0
+	return next.base == cur.base
 }
 
 // Release is a GitHub release.
@@ -152,7 +172,9 @@ type Options struct {
 	// Version is what is currently running.
 	Version string
 
-	// Channel is "stable" or "prerelease".
+	// Channel is ChannelStable or ChannelTest. Anything unrecognised is
+	// treated as stable, so a typo cannot silently opt a device into test
+	// builds.
 	Channel string
 
 	// Interval between checks.
@@ -225,7 +247,10 @@ func (u *Updater) CheckAndInstall(ctx context.Context) error {
 		return err
 	}
 
-	if !ShouldInstall(u.opts.Version, rel.Tag) {
+	// Either a genuine upgrade, or a device stepping back off a test build
+	// onto the matching stable release.
+	if !ShouldInstall(u.opts.Version, rel.Tag) &&
+		!(!IsTestChannel(u.opts.Channel) && LeavingTestChannel(u.opts.Version, rel.Tag)) {
 		u.log.Debug("no update needed", "current", u.opts.Version, "latest", rel.Tag)
 		return nil
 	}
@@ -370,7 +395,15 @@ func (u *Updater) latest(ctx context.Context) (Release, error) {
 		return Release{}, fmt.Errorf("decode releases: %w", err)
 	}
 
-	wantPre := u.opts.Channel == "prerelease"
+	// Highest version wins, not first listed. The API returns releases
+	// newest-created first, which is usually the same order but not when a
+	// fix is tagged on an older line, or when a test build is published
+	// after the stable release it was leading up to.
+	var best Release
+	var bestV version
+	found := false
+
+	wantPre := IsTestChannel(u.opts.Channel)
 	for _, r := range raw {
 		if r.Draft {
 			continue
@@ -378,13 +411,27 @@ func (u *Updater) latest(ctx context.Context) (Release, error) {
 		if r.Prerelease && !wantPre {
 			continue
 		}
-		out := Release{Tag: r.TagName, Prerelease: r.Prerelease, Assets: map[string]string{}}
-		for _, a := range r.Assets {
-			out.Assets[a.Name] = a.URL
+		v, ok := parseVersion(r.TagName)
+		if !ok {
+			// A tag we cannot order is a tag we cannot safely install.
+			u.log.Warn("ignoring release with unparseable tag", "tag", r.TagName)
+			continue
 		}
-		return out, nil
+		if found && compareVersion(v, bestV) <= 0 {
+			continue
+		}
+
+		best = Release{Tag: r.TagName, Prerelease: r.Prerelease, Assets: map[string]string{}}
+		for _, a := range r.Assets {
+			best.Assets[a.Name] = a.URL
+		}
+		bestV, found = v, true
 	}
-	return Release{}, fmt.Errorf("no release found on channel %q", u.opts.Channel)
+
+	if !found {
+		return Release{}, fmt.Errorf("no release found on channel %q", u.opts.Channel)
+	}
+	return best, nil
 }
 
 // checksums fetches and parses the SHA256SUMS asset.

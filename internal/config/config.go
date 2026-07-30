@@ -19,7 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dustinahudson/magic-mirror/internal/ics"
 	"github.com/dustinahudson/magic-mirror/internal/layout"
+	"github.com/dustinahudson/magic-mirror/internal/update"
 	"github.com/dustinahudson/magic-mirror/internal/widget"
 )
 
@@ -205,8 +207,12 @@ func (c Config) Validate() (warnings []string, err error) {
 		seenFeed[f.ID] = true
 		if f.URL == "" {
 			warnings = append(warnings, fmt.Sprintf("calendar %q has no URL and will be skipped", f.ID))
-		} else if !strings.HasPrefix(f.URL, "http://") && !strings.HasPrefix(f.URL, "https://") {
-			errs = append(errs, fmt.Sprintf("calendar %q: URL must be http or https", f.ID))
+		} else if u := ics.NormalizeURL(f.URL); !strings.HasPrefix(u, "http://") &&
+			!strings.HasPrefix(u, "https://") {
+			// Judged after normalisation, or this rejects the webcal:// link
+			// Apple's share sheet hands out — the exact string a user is most
+			// likely to paste.
+			errs = append(errs, fmt.Sprintf("calendar %q: link must be a web address", f.ID))
 		}
 	}
 
@@ -368,6 +374,14 @@ func (c *Config) fillDefaults() {
 	}
 	if c.Update.Repo == "" {
 		c.Update.Repo = d.Update.Repo
+	}
+
+	// Anything not recognised as the test channel becomes stable. Opting a
+	// mirror into test builds should take saying so, not a typo.
+	if update.IsTestChannel(c.Update.Channel) {
+		c.Update.Channel = update.ChannelTest
+	} else {
+		c.Update.Channel = update.ChannelStable
 	}
 
 	// Fill in widget defaults from each type's descriptor, so a config that

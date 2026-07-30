@@ -216,6 +216,37 @@
     </div>
 
     <div class="card">
+      <h3>Software updates</h3>
+      <p class="sub">
+        The mirror installs new versions on its own. If a new version fails to
+        start, it puts the previous one back.
+      </p>
+      <div class="row">
+        <div class="field">
+          <label for="update-enabled">Automatic updates</label>
+          <select id="update-enabled">
+            <option value="on">On — keep this mirror up to date</option>
+            <option value="off">Off — never update on its own</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="update-channel">Version to follow</label>
+          <select id="update-channel">
+            <option value="stable">Released versions</option>
+            <option value="test">Test versions</option>
+          </select>
+          <span class="help">
+            <b>Released versions</b> is what you want on a mirror you rely on.
+            <b>Test versions</b> takes new builds before they are released, to
+            try them out before everyone else gets them — expect the occasional
+            rough edge. Switching back brings this mirror to the released
+            version.
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Network name</h3>
       <p class="sub">What to type in a browser to reach this page.</p>
       <div class="row">
@@ -359,6 +390,9 @@ function renderAll() {
   $('zipcode').value = (config.weather && config.weather.zipcode) || '';
   $('units').value = config.units || 'imperial';
   $('hostname').value = config.hostname || '';
+  config.update = config.update || {};
+  $('update-enabled').value = config.update.enabled === false ? 'off' : 'on';
+  $('update-channel').value = isTestChannel(config.update.channel) ? 'test' : 'stable';
   $('hostpreview').textContent = (config.hostname || 'magicmirror') + '.local';
   renderTimezones();
   $('new-widget-type').replaceChildren(
@@ -721,6 +755,22 @@ $('hostname').oninput = e => {
 };
 $('zipcode').oninput = e => { config.weather = config.weather || {}; config.weather.zipcode = e.target.value; touch(); };
 $('units').onchange = e => { config.units = e.target.value; touch(); };
+
+/* "prerelease" is the name the field originally had; a config on a device
+   outlives whatever we called a setting this week. */
+function isTestChannel(c) {
+  return ['test', 'prerelease', 'beta'].includes(String(c || '').trim().toLowerCase());
+}
+$('update-enabled').onchange = e => {
+  config.update = config.update || {};
+  config.update.enabled = e.target.value === 'on';
+  touch();
+};
+$('update-channel').onchange = e => {
+  config.update = config.update || {};
+  config.update.channel = e.target.value;
+  touch();
+};
 $('timezone').onchange = e => { config.timezone = e.target.value; touch(); };
 
 $('reload').onclick = () => {
