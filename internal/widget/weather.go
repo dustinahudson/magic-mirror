@@ -148,6 +148,7 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 	}
 
 	tempEnd := tempFace.DrawTop(dst, x, y, temp, render.Primary)
+	right := tempEnd
 
 	if ok {
 		iconSize := min(tempFace.Size(), bounds.Max.Y-y)
@@ -155,23 +156,56 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 			pt := image.Pt(tempEnd+subSize/2, y+(tempFace.Height()-icon.Bounds().Dy())/2)
 			if pt.X+icon.Bounds().Dx() <= bounds.Max.X {
 				render.DrawImage(dst, icon, pt)
+				right = pt.X + icon.Bounds().Dx()
 			}
 		}
 	}
-	y += tempFace.Height()
 
-	// Condition, and "feels like" beside it — v1 kept feels-like on its own
-	// line below the temperature.
-	desc := Placeholder
+	// Condition and "feels like".
+	//
+	// v1 put these on their own line under the temperature. That works only
+	// while the tile is tall: the temperature is the greedy element — FitFace
+	// grows it into every pixel offered — so in a two-row tile it took the
+	// lot and the line below was silently dropped. "Feels like" simply never
+	// appeared, which is the wrong thing to lose, since on a hot or windy day
+	// it is the number that changes what you put on.
+	//
+	// So they go beside the icon, into the empty right half the temperature
+	// row already has, and the tile's height stops deciding whether they
+	// exist. The line below remains the fallback for a tile too narrow for a
+	// column there.
+	desc := []string{Placeholder}
 	if ok {
-		desc = cond.Condition()
+		desc = []string{cond.Condition()}
 		if w.cfg.ShowFeelsLike {
-			desc += fmt.Sprintf("   feels %.0f%s", cond.FeelsLike, degreeUnit(cond.Metric))
+			desc = append(desc,
+				fmt.Sprintf("feels %.0f%s", cond.FeelsLike, degreeUnit(cond.Metric)))
 		}
 	}
-	if y+subFace.Height() <= bounds.Max.Y {
-		subFace.DrawTop(dst, x, y, subFace.Truncate(desc, bounds.Dx()), render.Secondary)
-		y += subFace.Height()
+
+	descW := 0
+	for _, line := range desc {
+		descW = max(descW, subFace.Measure(line))
+	}
+	descX := right + subSize/2
+
+	if descX+descW <= bounds.Max.X && len(desc)*subFace.Height() <= tempFace.Height() {
+		// Centred against the number rather than top-aligned: the two lines
+		// are a caption to it, and a caption hanging off the cap height reads
+		// as a separate row.
+		dy := y + (tempFace.Height()-len(desc)*subFace.Height())/2
+		for _, line := range desc {
+			subFace.DrawTop(dst, descX, dy, line, render.Secondary)
+			dy += subFace.Height()
+		}
+		y += tempFace.Height()
+	} else {
+		y += tempFace.Height()
+		joined := strings.Join(desc, "   ")
+		if y+subFace.Height() <= bounds.Max.Y {
+			subFace.DrawTop(dst, x, y, subFace.Truncate(joined, bounds.Dx()), render.Secondary)
+			y += subFace.Height()
+		}
 	}
 
 	// When there is genuinely nothing, say why rather than leaving a void.
