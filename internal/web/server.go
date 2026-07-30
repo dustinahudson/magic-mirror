@@ -11,7 +11,9 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -19,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/dustinahudson/magic-mirror/internal/config"
@@ -124,6 +127,22 @@ func (s *Server) Close() error {
 	return s.srv.Shutdown(ctx)
 }
 
+// uiETag is the settings page's identity, computed once from its contents.
+//
+// The page is embedded in the binary, so it changes with every build — and
+// the mirror updates itself, which means a browser can hold a copy of the
+// page from a version the mirror is no longer running. Served with no
+// validator at all, that copy is kept on heuristics and someone ends up
+// driving an old settings page against a new API, with no way to tell.
+var uiETag = sync.OnceValue(func() string {
+	body, err := uiFS.ReadFile("ui.html")
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+})
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -134,7 +153,20 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ui missing", http.StatusInternalServerError)
 		return
 	}
+
+	// no-cache rather than no-store: the browser may keep the page, but it
+	// has to ask first. On a LAN that revalidation is a round trip and a
+	// 304, which is cheaper for a Pi Zero than re-sending 30KB every load.
+	etag := uiETag()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	_, _ = w.Write(body)
 }
 
