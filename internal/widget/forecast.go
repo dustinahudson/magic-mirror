@@ -40,14 +40,6 @@ func init() {
 				Default: true,
 				Help:    "Shows today as the first row, labelled \"Today\".",
 			},
-			{
-				Key: "showHeading", Label: "Show heading", Type: FieldBool,
-				Default: true,
-			},
-			{
-				Key: "heading", Label: "Heading text", Type: FieldText,
-				Default: "WEATHER FORECAST",
-			},
 		},
 		New: newForecast,
 	})
@@ -57,18 +49,16 @@ type forecastConfig struct {
 	Days         int    `json:"days"`
 	Orientation  string `json:"orientation"`
 	IncludeToday bool   `json:"includeToday"`
-	ShowHeading  bool   `json:"showHeading"`
-	Heading      string `json:"heading"`
 }
 
 // Forecast renders the multi-day outlook.
 //
-// Ported from the forecast section of v1's weather_widget.cpp, which was a
-// flex column of day rows — day name on the left at a fixed width, icon in
-// the middle, high/low on the right — under a ruled "WEATHER FORECAST"
-// heading. That vertical arrangement is the default here for the same
-// reason it was chosen there: a mirror is a tall narrow slice of wall, and
-// stacked rows read better across a room than five thin columns.
+// Ported from the forecast section of v1's weather_widget.cpp: a flex
+// column of day rows — day name on the left at a fixed width, icon in the
+// middle, high/low on the right. That vertical arrangement is the default
+// here for the same reason it was chosen there: a mirror is a tall narrow
+// slice of wall, and stacked rows read better across a room than five thin
+// columns.
 type Forecast struct {
 	cfg forecastConfig
 }
@@ -78,8 +68,6 @@ func newForecast(raw json.RawMessage) (Widget, error) {
 		Days:         5,
 		Orientation:  "vertical",
 		IncludeToday: true,
-		ShowHeading:  true,
-		Heading:      "WEATHER FORECAST",
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
@@ -141,10 +129,10 @@ func (w *Forecast) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 		return
 	}
 
+	// No section heading: the compositor rules a line between stacked
+	// widgets, which separates the outlook from current conditions without
+	// spending a row on a label that says what the icons already say.
 	area := bounds
-	if w.cfg.ShowHeading && w.cfg.Heading != "" {
-		area = w.drawHeading(dst, bounds, ctx)
-	}
 	st.DrawMarker(dst, bounds, ctx, 13)
 
 	if w.cfg.Orientation == "horizontal" {
@@ -152,29 +140,6 @@ func (w *Forecast) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) 
 		return
 	}
 	w.renderVertical(dst, area, ctx, days, offset)
-}
-
-// drawHeading renders the ruled section header and returns the area left
-// for the rows.
-//
-// v1 drew this as a 14pt grey label with a one-pixel bottom border — the
-// only rule anywhere in that layout, separating current conditions from the
-// outlook beneath.
-func (w *Forecast) drawHeading(dst *image.RGBA, bounds image.Rectangle, ctx Context) image.Rectangle {
-	size := clampInt(bounds.Dy()/16, 11, 22)
-	face, err := ctx.Fonts.Face(render.Regular, size)
-	if err != nil {
-		return bounds
-	}
-
-	y := bounds.Min.Y
-	face.DrawTop(dst, bounds.Min.X, y, strings.ToUpper(w.cfg.Heading), render.Muted)
-	y += face.Height() + 6
-
-	render.HLine(dst, bounds.Min.X, bounds.Max.X, y, 1, render.Faint)
-	y += 8
-
-	return image.Rect(bounds.Min.X, y, bounds.Max.X, bounds.Max.Y)
 }
 
 func (w *Forecast) renderEmpty(dst *image.RGBA, bounds image.Rectangle, ctx Context, st Staleness) {

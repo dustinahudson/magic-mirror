@@ -150,6 +150,7 @@ func (c *Compositor) Draw(ctx widget.Context) []image.Rectangle {
 
 	if full {
 		render.Fill(c.frame, c.frame.Bounds(), render.Background)
+		c.drawSeparators()
 	}
 
 	var dirty []image.Rectangle
@@ -186,6 +187,57 @@ func (c *Compositor) Draw(ctx widget.Context) []image.Rectangle {
 		return []image.Rectangle{c.frame.Bounds()}
 	}
 	return dirty
+}
+
+// drawSeparators rules a line above every widget that has another widget
+// above it in the same column.
+//
+// This belongs to the compositor rather than to any widget: only the
+// compositor knows what sits above what, and a widget drawing its own top
+// rule cannot tell whether it is the first in a column or the third.
+//
+// The rules live in the grid gap, outside every tile's bounds, so a tile
+// redraw never erases one. That also means they are drawn only on a full
+// repaint — which is exactly when they can change, since the layout is
+// fixed between config applies.
+func (c *Compositor) drawSeparators() {
+	for i := range c.placements {
+		a := c.placements[i].Pos
+		if !c.hasWidgetAbove(i, a) {
+			continue
+		}
+
+		r := c.grid.Cell(a).Intersect(c.frame.Bounds())
+		if r.Empty() {
+			continue
+		}
+		// Centre the rule in the gap above the tile.
+		y := r.Min.Y - c.grid.GapY/2
+		if y <= c.frame.Bounds().Min.Y {
+			continue
+		}
+		render.HLine(c.frame, r.Min.X, r.Max.X, y, 1, render.Faint)
+	}
+}
+
+// hasWidgetAbove reports whether any other widget overlaps this one
+// horizontally and ends above it.
+func (c *Compositor) hasWidgetAbove(skip int, a layout.Pos) bool {
+	aCols := max(1, a.ColSpan)
+	for j := range c.placements {
+		if j == skip {
+			continue
+		}
+		b := c.placements[j].Pos
+		bCols := max(1, b.ColSpan)
+
+		// Share any column, and finish at or before this one starts.
+		if a.Col < b.Col+bCols && b.Col < a.Col+aCols &&
+			b.Row+max(1, b.RowSpan) <= a.Row {
+			return true
+		}
+	}
+	return false
 }
 
 // renderOne draws a single widget, containing any panic to that tile.
