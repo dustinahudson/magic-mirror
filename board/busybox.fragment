@@ -1,0 +1,17 @@
+# BusyBox config fragment for the Magic Mirror.
+#
+# Buildroot's default busybox config leaves ntpd out, and a Pi Zero W has no
+# real-time clock — so the system boots at 1970 and stays there. That is not
+# merely a wrong clock on screen: every TLS handshake fails with
+#
+#   x509: certificate has expired or is not yet valid:
+#   current time 1970-01-01T00:02:05Z is before 2026-06-18T11:35:50Z
+#
+# because every certificate's NotBefore is decades in the future. Weather and
+# calendar both failed this way on the first successful network connection.
+#
+# NTP itself is unaffected by the wrong clock, since it is plain UDP with no
+# certificate to check — which is what makes it the bootstrap.
+CONFIG_NTPD=y
+CONFIG_FEATURE_NTPD_SERVER=n
+CONFIG_FEATURE_NTPD_CONF=n

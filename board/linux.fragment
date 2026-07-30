@@ -1,0 +1,104 @@
+# Kernel config fragment for the Magic Mirror.
+#
+# Two jobs: turn on what the appliance needs, and turn off enough of the
+# bcmrpi defconfig that the image stays small. Every CONFIG_*=n here is
+# something the device physically cannot use or the app never touches.
+
+# --- Framebuffer ---
+# Legacy fbdev rather than full DRM/KMS. The firmware sets the HDMI mode from
+# config.txt before Linux starts, bcm2708_fb picks up that framebuffer, and
+# the app mmaps /dev/fb0. Nothing here needs modesetting, and the DRM stack
+# plus VC4 is several megabytes of kernel we would never call.
+CONFIG_FB=y
+CONFIG_FB_BCM2708=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_LOGO=y
+CONFIG_LOGO_LINUX_CLUT224=y
+
+# --- WiFi: BCM43430 over SDIO ---
+# Left as whatever the base defconfig chooses (they build as modules).
+#
+# An earlier version forced CONFIG_CFG80211=y here. The override did not
+# take — Kconfig resolved it back to =m — and the post-build prune then
+# deleted cfg80211.ko because a comment claimed it was built in. brcmfmac
+# then failed with "Unknown symbol cfg80211_get_p2p_attr" and wlan0 never
+# appeared. post-build.sh now derives what to keep from modules.dep, so it
+# no longer matters which way this resolves.
+
+# brcmfmac is a MODULE, deliberately, and this is load-bearing: the recovery
+# ladder does `rmmod brcmfmac && modprobe brcmfmac` to hard-reset a wedged
+# radio without rebooting the box. Built in, that rung silently becomes a
+# no-op and the ladder skips straight to reboot — which is precisely the v1
+# behaviour this design exists to avoid.
+CONFIG_BRCMFMAC=m
+CONFIG_BRCMUTIL=m
+CONFIG_BRCMFMAC_SDIO=y
+CONFIG_BRCMFMAC_PROTO_BCDC=y
+
+# --- Modules are stored uncompressed ---
+#
+# Buildroot's bundled kmod is built without xz support (-XZ), so its depmod
+# cannot read .ko.xz and silently emits an EMPTY modules.dep. modprobe then
+# refuses to load anything, which would break the driver-reload rung above
+# and, with it, WiFi at boot.
+#
+# After pruning there are five modules totalling well under a megabyte, so
+# compressing them buys nothing worth this failure mode.
+CONFIG_MODULE_COMPRESS_NONE=y
+# CONFIG_MODULE_COMPRESS_XZ is not set
+# CONFIG_MODULE_COMPRESS_GZIP is not set
+# CONFIG_MODULE_COMPRESS_ZSTD is not set
+
+# --- Initramfs linked into the kernel ---
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+# CONFIG_INITRAMFS_SOURCE is deliberately NOT set here. Buildroot points it
+# at the generated cpio when BR2_TARGET_ROOTFS_INITRAMFS is on, and setting
+# it empty in this fragment overrides that — producing a kernel with no
+# rootfs linked in and a device that panics on boot.
+
+# --- Watchdog ---
+# The BCM2835 hardware watchdog is the floor under everything. The app pets it
+# from the render loop only, so "frames stopped" reboots and "network stalled"
+# does not — the distinction v1 could not make, because its fetch and its
+# render were the same loop.
+CONFIG_WATCHDOG=y
+CONFIG_BCM2835_WDT=y
+
+# --- Filesystems ---
+CONFIG_VFAT_FS=y
+CONFIG_FAT_DEFAULT_UTF8=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_TMPFS=y
+# No ext4, no squashfs: the rootfs is a cpio in RAM and the only real
+# filesystem is the FAT boot partition.
+# CONFIG_EXT4_FS is not set
+# CONFIG_SQUASHFS is not set
+
+# --- MMC/SD ---
+CONFIG_MMC=y
+CONFIG_MMC_BCM2835=y
+CONFIG_MMC_BCM2835_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_IPROC=y
+
+# --- Networking ---
+CONFIG_INET=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+# IPv6 stays: some networks are v6-only and Open-Meteo resolves on both.
+CONFIG_IPV6=y
+
+# --- Excluded: things this device cannot use or the app never touches ---
+# CONFIG_SOUND is not set
+# CONFIG_BT is not set
+# CONFIG_USB_STORAGE is not set
+# CONFIG_NETFILTER is not set
+# CONFIG_WIRELESS_EXT is not set
+# CONFIG_DRM is not set
+# CONFIG_MEDIA_SUPPORT is not set
+# CONFIG_INPUT_JOYSTICK is not set
+# CONFIG_INPUT_TOUCHSCREEN is not set
+# CONFIG_DEBUG_INFO is not set
+# CONFIG_KALLSYMS_ALL is not set

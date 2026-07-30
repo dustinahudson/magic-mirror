@@ -1,0 +1,5 @@
+# No external packages: the Go binary is not built by Buildroot.
+#
+# It lives on the FAT partition as mm.current, not in the rootfs, so that
+# app updates and OS updates stay independent tiers — shipping a new app
+# never rebuilds a kernel.

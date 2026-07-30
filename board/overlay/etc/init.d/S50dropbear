@@ -1,0 +1,124 @@
+#!/bin/sh
+#
+# SSH, key-only, with a host key that survives reboots.
+#
+# The host key lives in /etc/dropbear on the RAM rootfs and is *cached* to
+# the FAT partition. Pointing dropbear at /boot directly does not work: FAT
+# cannot represent the 0600 a private key needs, since every file inherits
+# the mount's umask.
+#
+# The key is generated explicitly here rather than with dropbear's -R.
+# With -R the key is created lazily, on the first incoming connection — so a
+# failure to generate shows up as the connection dropping mid-key-exchange,
+# at SSH2_MSG_KEX_ECDH_REPLY, with nothing logged anywhere useful. Doing it
+# up front means a failure is visible at boot, in a file we can read over
+# HTTP.
+#
+# Password authentication is disabled outright (-s -g). The only credential
+# is the authorized key from the rootfs overlay, so if that key cannot be
+# read there is no usable auth method at all and connections are refused.
+
+# /var/run/dropbear, not /etc/dropbear.
+#
+# Buildroot ships /etc/dropbear as a symlink to /var/run/dropbear, and
+# creates the target in its own init script — which this file replaces. The
+# result was a dangling symlink: `mkdir -p /etc/dropbear` returns EEXIST,
+# which -p suppresses, so it reported success while creating nothing, and
+# dropbearkey then failed with ENOENT writing through it.
+#
+# Naming the real path avoids the whole trap. It is on tmpfs, so it is also
+# a filesystem that can actually hold a 0600 private key — which the FAT
+# partition cannot. The key is ephemeral there and cached to /boot for the
+# next boot.
+ETCDIR=/var/run/dropbear
+CACHE=/boot/dropbear
+KEY=dropbear_ed25519_host_key
+PIDFILE=/var/run/dropbear.pid
+NETLOG=/boot/logs/network.log
+
+say() {
+  echo "dropbear: $*"
+  mkdir -p "$(dirname "$NETLOG")" 2>/dev/null
+  echo "$(date '+%H:%M:%S') dropbear: $*" >> "$NETLOG" 2>/dev/null || true
+}
+
+case "$1" in
+  start)
+    if ! mkdir -p "$ETCDIR" 2>/dev/null || [ ! -d "$ETCDIR" ]; then
+      say "FAILED cannot create $ETCDIR"
+      exit 0
+    fi
+    chmod 700 "$ETCDIR"
+
+    # Restore the cached key if the card has one.
+    if [ -s "$CACHE/$KEY" ]; then
+      cp "$CACHE/$KEY" "$ETCDIR/$KEY" 2>/dev/null
+      chmod 600 "$ETCDIR/$KEY" 2>/dev/null
+      say "restored host key from $CACHE"
+    fi
+
+    # Generate one if we still have nothing usable.
+    if [ ! -s "$ETCDIR/$KEY" ]; then
+      out=$(dropbearkey -t ed25519 -f "$ETCDIR/$KEY" 2>&1)
+      if [ -s "$ETCDIR/$KEY" ]; then
+        chmod 600 "$ETCDIR/$KEY"
+        say "generated host key"
+      else
+        say "FAILED to generate host key: $out"
+        exit 0
+      fi
+    fi
+
+    # authorized_keys arrives from the rootfs overlay, whose permissions are
+    # not preserved by the image build, so it lands 0644 in a 0755 directory.
+    if [ -s /root/.ssh/authorized_keys ]; then
+      chmod 700 /root/.ssh 2>/dev/null
+      chmod 600 /root/.ssh/authorized_keys 2>/dev/null
+      say "authorized_keys present ($(wc -l < /root/.ssh/authorized_keys) key(s))"
+    else
+      say "WARNING no /root/.ssh/authorized_keys — no login will be possible"
+    fi
+
+    # Foreground with stderr logging, backgrounded by the shell, so anything
+    # dropbear complains about lands in a file we can read remotely. Started
+    # with -F because a daemonised dropbear reports success from the parent
+    # before the child has done anything, which made "started" meaningless.
+    #
+    # -s  no password logins
+    # -g  no password logins for root specifically
+    # -E  log to stderr rather than syslog
+    ( dropbear -F -E -s -g -r "$ETCDIR/$KEY" >> "$NETLOG" 2>&1 ) &
+    echo $! > "$PIDFILE"
+
+    # Give it a moment, then confirm it is actually alive rather than
+    # trusting that the launch returned.
+    sleep 1
+    if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      say "running on port 22"
+    else
+      say "FAILED — exited immediately; see above"
+    fi
+
+    # Cache the key for next boot. Copying it to FAT is fine; only using it
+    # from there is not.
+    if [ -s "$ETCDIR/$KEY" ] && mkdir -p "$CACHE" 2>/dev/null; then
+      cp "$ETCDIR/$KEY" "$CACHE/$KEY" 2>/dev/null && sync
+    fi
+    ;;
+
+  stop)
+    [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+    ;;
+
+  restart|reload)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

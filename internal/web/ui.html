@@ -1,0 +1,828 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Magic Mirror — settings</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0d; --panel: #131317; --line: #24242c; --line2: #2f2f3a;
+    --fg: #e6e6ec; --dim: #9a9aa6; --faint: #62626e;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149; --accent: #6ea8fe;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 30; background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    padding: .8rem 1.25rem; max-width: 70rem; margin: 0 auto;
+  }
+  .bar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+  .spacer { flex: 1; }
+
+  nav { max-width: 70rem; margin: 0 auto; padding: 0 1.25rem; display: flex; gap: .25rem; }
+  nav a {
+    padding: .6rem .9rem; color: var(--dim); text-decoration: none;
+    border-bottom: 2px solid transparent; font-size: .95rem;
+  }
+  nav a:hover { color: var(--fg); }
+  nav a.on { color: var(--fg); border-bottom-color: var(--accent); }
+
+  main { max-width: 70rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+  .page { display: none; }
+  .page.on { display: block; }
+
+  h2 { font-size: 1.15rem; margin: 0 0 .3rem; font-weight: 600; }
+  .lede { color: var(--dim); font-size: .95rem; margin: 0 0 1.25rem; max-width: 46rem; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 1.1rem; margin-bottom: .9rem;
+  }
+  .card h3 { margin: 0 0 .2rem; font-size: 1rem; font-weight: 600; }
+  .card .sub { color: var(--dim); font-size: .85rem; margin: 0 0 .9rem; }
+
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+  .field { display: flex; flex-direction: column; gap: .35rem; flex: 1 1 14rem; }
+  .field > label { font-size: .85rem; color: var(--dim); font-weight: 500; }
+  .field .help { font-size: .8rem; color: var(--faint); line-height: 1.45; }
+  .field.check { flex-direction: row; align-items: center; gap: .5rem; flex-basis: 100%; }
+  .field.check > label { color: var(--fg); font-size: .92rem; }
+
+  input, select, textarea {
+    background: #0e0e12; color: var(--fg);
+    border: 1px solid var(--line2); border-radius: 8px;
+    padding: .55rem .7rem; font: inherit; font-size: .95rem; width: 100%;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea {
+    min-height: 11rem; resize: vertical; line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9rem;
+  }
+  input[type=checkbox] { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); flex: none; }
+
+  button {
+    background: #1d1d24; color: var(--fg); border: 1px solid var(--line2);
+    border-radius: 8px; padding: .55rem 1rem; font: inherit; font-size: .92rem;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--faint); }
+  button.primary { background: var(--accent); color: #06111f; border-color: transparent; font-weight: 600; }
+  button.ghost { background: transparent; }
+  button.danger { color: var(--err); background: transparent; border-color: transparent; }
+  button.danger:hover { border-color: var(--err); }
+
+  /* ---- grid editor ---- */
+  #stage {
+    position: relative; aspect-ratio: 16/9; background: #000;
+    border: 1px solid var(--line2); border-radius: 10px; overflow: hidden;
+    touch-action: none; user-select: none;
+  }
+  #stage .rule { position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(to right, #1b1b22 1px, transparent 1px),
+                      linear-gradient(to bottom, #1b1b22 1px, transparent 1px); }
+  .tile {
+    position: absolute; background: #1a2030; border: 1px solid #33507e;
+    border-radius: 5px; color: #9dc0ff; font-size: .78rem; line-height: 1.25;
+    padding: 4px 6px; overflow: hidden; cursor: grab;
+    display: flex; flex-direction: column;
+  }
+  .tile:hover { border-color: var(--accent); }
+  .tile.selected { background: #22304a; border-color: var(--accent); color: #cfe0ff; z-index: 5; }
+  .tile.dragging { cursor: grabbing; opacity: .85; z-index: 10; }
+  .tile.overlap { border-color: var(--warn); background: #322a18; color: #f0d38a; }
+  .tile b { font-weight: 600; }
+  .tile .sz { opacity: .55; font-size: .72rem; }
+  .tile .grip {
+    position: absolute; right: 0; bottom: 0; width: 16px; height: 16px;
+    cursor: nwse-resize; opacity: .5;
+    background: linear-gradient(135deg, transparent 50%, currentColor 50%, currentColor 60%,
+                transparent 60%, transparent 70%, currentColor 70%, currentColor 80%, transparent 80%);
+  }
+  .tile .grip:hover { opacity: 1; }
+  .hint { color: var(--faint); font-size: .85rem; margin: .6rem 0 0; }
+  .hint.warn { color: var(--warn); }
+
+  /* ---- colour swatches ---- */
+  .swatches { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .sw {
+    width: 1.75rem; height: 1.75rem; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent;
+  }
+  .sw.on { border-color: var(--fg); }
+
+  /* ---- status ---- */
+  .status-row {
+    display: flex; gap: .75rem; align-items: center; flex-wrap: wrap;
+    padding: .7rem .9rem; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; margin-bottom: .5rem;
+  }
+  .status-row .key { font-weight: 600; min-width: 8rem; text-transform: capitalize; }
+  .badge { font-size: .75rem; padding: .15rem .55rem; border-radius: 999px; border: 1px solid; }
+  .badge.fresh { color: var(--ok); border-color: var(--ok); }
+  .badge.stale { color: var(--warn); border-color: var(--warn); }
+  .badge.failed { color: var(--err); border-color: var(--err); }
+  .badge.never { color: var(--faint); border-color: var(--faint); }
+  .status-row .err { color: var(--err); font-size: .82rem; flex-basis: 100%; }
+
+  .empty { color: var(--faint); text-align: center; padding: 2rem 1rem; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+    padding: .8rem 1.2rem; border-radius: 10px; font-size: .92rem;
+    border: 1px solid var(--line2); background: var(--panel);
+    max-width: min(44rem, 92vw); display: none; white-space: pre-wrap; z-index: 60;
+  }
+  #toast.ok { border-color: var(--ok); color: var(--ok); }
+  #toast.err { border-color: var(--err); color: var(--err); }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
+</style>
+
+<header>
+  <div class="bar">
+    <h1>Magic Mirror</h1>
+    <span class="spacer"></span>
+    <span id="dirty" style="color:var(--warn);font-size:.85rem;display:none">unsaved changes</span>
+    <button id="reload" class="ghost">Discard</button>
+    <button id="save" class="primary">Save</button>
+  </div>
+  <nav>
+    <a href="#layout" data-page="layout">Layout</a>
+    <a href="#calendars" data-page="calendars">Calendars</a>
+    <a href="#general" data-page="general">General</a>
+    <a href="#status" data-page="status">Status</a>
+  </nav>
+</header>
+
+<main>
+  <section class="page" id="page-layout">
+    <h2>Layout</h2>
+    <p class="lede">
+      Drag a panel to move it. Drag its bottom-right corner to resize.
+      Click one to change its settings.
+    </p>
+    <div id="stage"><div class="rule"></div></div>
+    <p class="hint" id="layout-hint"></p>
+
+    <div class="row" style="margin:1rem 0 1.5rem">
+      <select id="new-widget-type" style="flex:0 1 16rem"></select>
+      <button id="add-widget">Add panel</button>
+    </div>
+
+    <div id="selected"></div>
+  </section>
+
+  <section class="page" id="page-calendars">
+    <h2>Calendars</h2>
+    <p class="lede">
+      Each calendar you add shows up on the mirror in its own colour. You can
+      choose which panels show which calendars in the Layout tab.
+    </p>
+    <div id="calendars"></div>
+    <button id="add-calendar" class="primary">Add a calendar</button>
+  </section>
+
+  <section class="page" id="page-general">
+    <h2>General</h2>
+    <p class="lede">Where the mirror is, and what to call it.</p>
+
+    <div class="card">
+      <h3>Location &amp; time</h3>
+      <p class="sub">Used for the weather and for showing the right local time.</p>
+      <div class="row">
+        <div class="field">
+          <label for="zipcode">Town or postcode</label>
+          <input id="zipcode" placeholder="64111">
+          <span class="help">A postcode or a town name — either works.</span>
+        </div>
+        <div class="field">
+          <label for="timezone">Time zone</label>
+          <select id="timezone"></select>
+        </div>
+        <div class="field">
+          <label for="units">Units</label>
+          <select id="units">
+            <option value="imperial">Fahrenheit and miles per hour</option>
+            <option value="metric">Celsius and kilometres per hour</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Software updates</h3>
+      <p class="sub">
+        The mirror installs new versions on its own. If a new version fails to
+        start, it puts the previous one back.
+      </p>
+      <div class="row">
+        <div class="field">
+          <label for="update-enabled">Automatic updates</label>
+          <select id="update-enabled">
+            <option value="on">On — keep this mirror up to date</option>
+            <option value="off">Off — never update on its own</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="update-channel">Version to follow</label>
+          <select id="update-channel">
+            <option value="stable">Released versions</option>
+            <option value="test">Test versions</option>
+          </select>
+          <span class="help">
+            <b>Released versions</b> is what you want on a mirror you rely on.
+            <b>Test versions</b> takes new builds before they are released, to
+            try them out before everyone else gets them — expect the occasional
+            rough edge. Switching back brings this mirror to the released
+            version.
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Network name</h3>
+      <p class="sub">What to type in a browser to reach this page.</p>
+      <div class="row">
+        <div class="field">
+          <label for="hostname">Name</label>
+          <input id="hostname" placeholder="magicmirror">
+          <span class="help">
+            The mirror answers to <b id="hostpreview">magicmirror.local</b> on your
+            home network. Letters, numbers and hyphens only.
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="page" id="page-status">
+    <h2>Status</h2>
+    <p class="lede">
+      What the mirror is currently able to fetch. Everything green means it is
+      working normally.
+    </p>
+    <div id="status"></div>
+    <p class="hint">Version <span id="version">…</span></p>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+let config = null, types = [], selectedId = null, dirty = false;
+
+const $ = id => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'html') n.innerHTML = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return n;
+};
+
+function toast(msg, kind = 'ok') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = kind;
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, kind === 'err' ? 12000 : 3500);
+}
+
+function touch() {
+  dirty = true;
+  $('dirty').style.display = '';
+}
+
+/* ---------- identity ----------
+   IDs are an implementation detail. They are generated once, never shown,
+   and never edited — widgets reference calendars by id, so letting someone
+   retype one would silently unlink every panel using it. People see names. */
+
+function newID(prefix, taken) {
+  let n = 1, id = prefix;
+  while (taken.has(id)) id = prefix + '-' + (++n);
+  return id;
+}
+
+// A palette of distinguishable colours, assigned in order so two calendars
+// never arrive the same colour. Colour is how the mirror tells them apart.
+const PALETTE = ['#52FA7F', '#6EA8FE', '#FAD452', '#FA5258', '#C77DFF',
+                 '#4FD1C5', '#FF9F5A', '#F06BC0'];
+
+function nextColour() {
+  const used = new Set((config.calendars || []).map(c => (c.color || '').toUpperCase()));
+  return PALETTE.find(c => !used.has(c)) || PALETTE[(config.calendars || []).length % PALETTE.length];
+}
+
+/* ---------- navigation ---------- */
+
+function show(page) {
+  for (const s of document.querySelectorAll('.page')) s.classList.toggle('on', s.id === 'page-' + page);
+  for (const a of document.querySelectorAll('nav a')) a.classList.toggle('on', a.dataset.page === page);
+  if (page === 'layout') renderGrid();
+  if (page === 'status') refreshStatus();
+}
+addEventListener('hashchange', () => show((location.hash || '#layout').slice(1)));
+
+/* ---------- load ---------- */
+
+async function load() {
+  const [c, t] = await Promise.all([
+    fetch('/api/config').then(r => r.json()),
+    fetch('/api/widget-types').then(r => r.json()),
+  ]);
+  config = c;
+  types = t || [];
+  config.widgets = config.widgets || [];
+  config.calendars = config.calendars || [];
+  config.widgets.forEach(normalisePos);
+
+  dirty = false;
+  $('dirty').style.display = 'none';
+
+  renderAll();
+  show((location.hash || '#layout').slice(1));
+}
+
+function normalisePos(inst) {
+  const d = descFor(inst.type);
+  inst.pos = inst.pos || {};
+  const p = inst.pos;
+  p.col = p.col | 0; p.row = p.row | 0;
+  p.colSpan = p.colSpan || (d ? d.defaultSpan.cols : 3);
+  p.rowSpan = p.rowSpan || (d ? d.defaultSpan.rows : 3);
+}
+
+const descFor = t => types.find(x => x.type === t);
+const gridCols = () => (config.layout && config.layout.cols) || 12;
+const gridRows = () => (config.layout && config.layout.rows) || 16;
+
+// What to call a panel on screen. Two clocks become "Clock" and "Clock 2"
+// rather than exposing "datetime-2".
+function widgetLabel(inst) {
+  const d = descFor(inst.type);
+  const name = d ? d.name : inst.type;
+  const sameType = config.widgets.filter(w => w.type === inst.type);
+  if (sameType.length < 2) return name;
+  return name + ' ' + (sameType.indexOf(inst) + 1);
+}
+
+function renderAll() {
+  $('zipcode').value = (config.weather && config.weather.zipcode) || '';
+  $('units').value = config.units || 'imperial';
+  $('hostname').value = config.hostname || '';
+  config.update = config.update || {};
+  $('update-enabled').value = config.update.enabled === false ? 'off' : 'on';
+  $('update-channel').value = isTestChannel(config.update.channel) ? 'test' : 'stable';
+  $('hostpreview').textContent = (config.hostname || 'magicmirror') + '.local';
+  renderTimezones();
+  $('new-widget-type').replaceChildren(
+    ...types.map(t => el('option', { value: t.type }, 'Add ' + t.name)));
+  renderCalendars();
+  renderGrid();
+  renderSelected();
+}
+
+function renderTimezones() {
+  const common = [
+    'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
+    'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
+    'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin',
+    'Europe/Madrid', 'Europe/Rome', 'Europe/Stockholm',
+    'Australia/Sydney', 'Australia/Perth', 'Asia/Tokyo', 'Asia/Singapore',
+    'Asia/Kolkata', 'UTC',
+  ];
+  const cur = config.timezone || 'America/Chicago';
+  const list = common.includes(cur) ? common : [cur, ...common];
+  $('timezone').replaceChildren(...list.map(tz =>
+    el('option', { value: tz, ...(tz === cur ? { selected: 'selected' } : {}) },
+      tz.replace(/_/g, ' '))));
+}
+
+/* ---------- layout editor ---------- */
+
+function overlapping() {
+  const out = new Set(), ws = config.widgets;
+  for (let i = 0; i < ws.length; i++) {
+    for (let j = i + 1; j < ws.length; j++) {
+      const a = ws[i].pos, b = ws[j].pos;
+      if (a.col < b.col + b.colSpan && b.col < a.col + a.colSpan &&
+          a.row < b.row + b.rowSpan && b.row < a.row + a.rowSpan) {
+        out.add(ws[i].id); out.add(ws[j].id);
+      }
+    }
+  }
+  return out;
+}
+
+function renderGrid() {
+  const stage = $('stage'), cols = gridCols(), rows = gridRows();
+  stage.querySelector('.rule').style.backgroundSize = `${100 / cols}% ${100 / rows}%`;
+  [...stage.querySelectorAll('.tile')].forEach(n => n.remove());
+
+  const bad = overlapping();
+  for (const inst of config.widgets) {
+    const p = inst.pos;
+    stage.append(el('div', {
+      class: 'tile' + (inst.id === selectedId ? ' selected' : '') + (bad.has(inst.id) ? ' overlap' : ''),
+      'data-id': inst.id,
+      style: `left:${p.col / cols * 100}%;top:${p.row / rows * 100}%;`
+           + `width:${p.colSpan / cols * 100}%;height:${p.rowSpan / rows * 100}%;`,
+    },
+      el('b', {}, widgetLabel(inst)),
+      el('span', { class: 'sz' }, `${p.colSpan}×${p.rowSpan}`),
+      el('div', { class: 'grip', 'data-grip': '1' })));
+  }
+
+  const n = bad.size;
+  const hint = $('layout-hint');
+  hint.className = n ? 'hint warn' : 'hint';
+  hint.textContent = n
+    ? `${n} panel${n === 1 ? '' : 's'} overlap — the one added later will cover the other.`
+    : 'Tip: select a panel and use the arrow keys to nudge it, or hold Shift to resize.';
+}
+
+let drag = null;
+
+$('stage').addEventListener('pointerdown', e => {
+  const tile = e.target.closest('.tile');
+  if (!tile) { select(null); return; }
+  const inst = config.widgets.find(w => w.id === tile.dataset.id);
+  if (!inst) return;
+  select(inst.id);
+
+  const rect = $('stage').getBoundingClientRect();
+  drag = { inst, mode: e.target.dataset.grip ? 'resize' : 'move',
+           x0: e.clientX, y0: e.clientY,
+           cw: rect.width / gridCols(), ch: rect.height / gridRows(),
+           orig: { ...inst.pos }, moved: false };
+  tile.classList.add('dragging');
+  tile.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+$('stage').addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dc = Math.round((e.clientX - drag.x0) / drag.cw);
+  const dr = Math.round((e.clientY - drag.y0) / drag.ch);
+  if (dc || dr) { drag.moved = true; touch(); }
+
+  const cols = gridCols(), rows = gridRows();
+  const p = drag.inst.pos, o = drag.orig, d = descFor(drag.inst.type);
+  const minC = d ? Math.max(1, d.minSpan.cols) : 1;
+  const minR = d ? Math.max(1, d.minSpan.rows) : 1;
+
+  if (drag.mode === 'move') {
+    p.col = clamp(o.col + dc, 0, cols - o.colSpan);
+    p.row = clamp(o.row + dr, 0, rows - o.rowSpan);
+  } else {
+    p.colSpan = clamp(o.colSpan + dc, minC, cols - o.col);
+    p.rowSpan = clamp(o.rowSpan + dr, minR, rows - o.row);
+  }
+  renderGrid();
+});
+
+function endDrag() {
+  if (!drag) return;
+  const moved = drag.moved;
+  drag = null;
+  [...$('stage').querySelectorAll('.dragging')].forEach(n => n.classList.remove('dragging'));
+  if (moved) renderSelected();
+}
+$('stage').addEventListener('pointerup', endDrag);
+$('stage').addEventListener('pointercancel', endDrag);
+
+function select(id) { selectedId = id; renderGrid(); renderSelected(); }
+
+/* ---------- selected panel ---------- */
+
+function renderSelected() {
+  const host = $('selected');
+  const inst = config.widgets.find(w => w.id === selectedId);
+
+  if (!inst) {
+    host.replaceChildren(el('p', { class: 'empty' },
+      'Select a panel above to change its settings.'));
+    return;
+  }
+
+  const d = descFor(inst.type);
+  const fields = (d && d.fields) || [];
+
+  host.replaceChildren(el('div', { class: 'card' },
+    el('div', { class: 'row', style: 'align-items:center' },
+      el('div', { style: 'flex:1' },
+        el('h3', {}, widgetLabel(inst)),
+        el('p', { class: 'sub', style: 'margin:0' }, d ? d.description || '' : 'Unknown panel type')),
+      el('button', {
+        class: 'danger',
+        onclick: () => {
+          if (!confirm('Remove the ' + widgetLabel(inst) + ' panel?')) return;
+          config.widgets = config.widgets.filter(w => w !== inst);
+          touch(); select(null);
+        },
+      }, 'Remove panel')),
+
+    fields.length
+      ? el('div', { class: 'row', style: 'margin-top:1rem' }, ...fields.map(f => renderField(inst, f)))
+      : el('p', { class: 'sub', style: 'margin:1rem 0 0' }, 'This panel has no settings.'),
+  ));
+}
+
+function renderField(inst, f) {
+  inst.config = inst.config || {};
+  const cur = inst.config[f.key] !== undefined ? inst.config[f.key] : f.default;
+  const set = v => { inst.config[f.key] = v; touch(); };
+
+  if (f.type === 'bool') {
+    return el('div', { class: 'field check' },
+      el('input', {
+        type: 'checkbox', id: 'f-' + inst.id + '-' + f.key,
+        ...(cur ? { checked: 'checked' } : {}),
+        onchange: e => set(e.target.checked),
+      }),
+      el('label', { for: 'f-' + inst.id + '-' + f.key }, f.label || f.key),
+      f.help ? el('span', { class: 'help', style: 'flex-basis:100%' }, f.help) : null);
+  }
+
+  let input;
+  switch (f.type) {
+    case 'multiline':
+      input = el('textarea', { rows: 10, spellcheck: 'true',
+        oninput: e => set(e.target.value) });
+      input.value = cur ?? '';
+      break;
+    case 'number':
+      input = el('input', { type: 'number', value: cur ?? '',
+        ...(f.min !== undefined ? { min: f.min } : {}),
+        ...(f.max !== undefined ? { max: f.max } : {}),
+        oninput: e => set(parseFloat(e.target.value)) });
+      break;
+    case 'select':
+      input = el('select', { onchange: e => set(e.target.value) },
+        ...(f.options || []).map(o =>
+          el('option', { value: o.value, ...(o.value === cur ? { selected: 'selected' } : {}) }, o.label)));
+      break;
+    case 'color':
+      input = el('input', { type: 'color', value: cur || '#ffffff', oninput: e => set(e.target.value) });
+      break;
+    case 'feeds': {
+      const sel = new Set(Array.isArray(cur) ? cur : []);
+      const cals = config.calendars;
+      input = el('div', {},
+        ...cals.map(feed => el('label', {
+            style: 'display:flex;gap:.5rem;align-items:center;font-size:.92rem;padding:.15rem 0',
+          },
+          el('input', { type: 'checkbox', ...(sel.has(feed.id) ? { checked: 'checked' } : {}),
+            onchange: e => { e.target.checked ? sel.add(feed.id) : sel.delete(feed.id); set([...sel]); } }),
+          el('span', { style: `display:inline-block;width:.8rem;height:.8rem;border-radius:50%;background:${feed.color || '#888'}` }),
+          feed.name || 'Untitled calendar')),
+        cals.length ? null
+          : el('span', { class: 'help' }, 'No calendars yet — add one in the Calendars tab.'));
+      break;
+    }
+    default:
+      input = el('input', { type: f.type === 'url' ? 'url' : 'text', value: cur ?? '',
+        oninput: e => set(e.target.value) });
+  }
+
+  return el('div', { class: 'field' + (f.type === 'multiline' ? '' : ''),
+      ...(f.type === 'multiline' ? { style: 'flex-basis:100%' } : {}) },
+    el('label', {}, f.label || f.key), input,
+    f.help ? el('span', { class: 'help' }, f.help) : null);
+}
+
+/* ---------- calendars ---------- */
+
+function renderCalendars() {
+  const host = $('calendars');
+  host.replaceChildren();
+
+  if (!config.calendars.length) {
+    host.append(el('p', { class: 'empty' },
+      'No calendars yet. Add one to see your events on the mirror.'));
+    return;
+  }
+
+  config.calendars.forEach(feed => {
+    host.append(el('div', { class: 'card' },
+      el('div', { class: 'row', style: 'align-items:center' },
+        el('div', { style: 'flex:1;display:flex;gap:.6rem;align-items:center' },
+          el('span', { style: `display:inline-block;width:1rem;height:1rem;border-radius:50%;background:${feed.color || '#888'}` }),
+          el('h3', { style: 'margin:0' }, feed.name || 'Untitled calendar')),
+        el('button', {
+          class: 'danger',
+          onclick: () => {
+            if (!confirm('Remove "' + (feed.name || 'this calendar') + '"?')) return;
+            config.calendars = config.calendars.filter(c => c !== feed);
+            // Unlink it from any panel that was showing it.
+            for (const w of config.widgets) {
+              if (w.config && Array.isArray(w.config.feeds)) {
+                w.config.feeds = w.config.feeds.filter(id => id !== feed.id);
+              }
+            }
+            touch(); renderCalendars(); renderSelected();
+          },
+        }, 'Remove')),
+
+      el('div', { class: 'row', style: 'margin-top:.8rem' },
+        el('div', { class: 'field' },
+          el('label', {}, 'Name'),
+          el('input', { value: feed.name || '', placeholder: 'Family',
+            oninput: e => { feed.name = e.target.value; touch(); renderSelected(); } }),
+          el('span', { class: 'help' }, 'Just for you — this is not shown on the mirror.')),
+
+        el('div', { class: 'field', style: 'flex-basis:100%' },
+          el('label', {}, 'Calendar link'),
+          el('input', { value: feed.url || '', placeholder: 'https:// or webcal:// link',
+            oninput: e => { feed.url = e.target.value; touch(); } }),
+          el('span', { class: 'help', html:
+            'Paste the sharing link exactly as your calendar gives it to you — '
+            + '<code>webcal://</code> links work.'
+            + '<ul style="margin:.4rem 0 0;padding-left:1.1rem">'
+            + '<li><b>Google:</b> Settings → your calendar → Integrate calendar → '
+            + '<b>Secret address in iCal format</b></li>'
+            + '<li><b>Apple / iCloud:</b> Calendar → share icon beside the calendar → '
+            + 'tick <b>Public Calendar</b> → <b>Copy Link</b></li>'
+            + '<li><b>Outlook:</b> Settings → Calendar → Shared calendars → '
+            + '<b>Publish a calendar</b> → the <b>ICS</b> link</li>'
+            + '</ul>'
+            + '<div style="margin-top:.4rem">Treat the link like a password — anyone '
+            + 'who has it can read the calendar.</div>' })),
+
+        el('div', { class: 'field' },
+          el('label', {}, 'Colour on the mirror'),
+          el('div', { class: 'swatches' },
+            ...PALETTE.map(c => el('div', {
+              class: 'sw' + ((feed.color || '').toUpperCase() === c ? ' on' : ''),
+              style: `background:${c}`, title: c,
+              onclick: () => { feed.color = c; touch(); renderCalendars(); renderSelected(); },
+            })))),
+      )));
+  });
+}
+
+/* ---------- status ---------- */
+
+const FRIENDLY = {
+  weather: 'Weather', calendar: 'Calendars', system: 'Mirror',
+  network: 'Wi-Fi', provision: 'Setup',
+};
+const EXPLAIN = {
+  fresh: 'working', stale: 'using older data', failed: 'not working', never: 'waiting',
+};
+
+async function refreshStatus() {
+  try {
+    const s = await fetch('/api/status').then(r => r.json());
+    $('version').textContent = s.version || '';
+    const host = $('status');
+    const rows = (s.sources || []).map(src =>
+      el('div', { class: 'status-row' },
+        el('span', { class: 'key' }, FRIENDLY[src.key] || src.key),
+        el('span', { class: 'badge ' + src.status }, EXPLAIN[src.status] || src.status),
+        src.age ? el('span', { style: 'color:var(--dim);font-size:.85rem' }, 'updated ' + src.age + ' ago') : null,
+        src.error ? el('span', { class: 'err' }, src.error) : null));
+    host.replaceChildren(...(rows.length ? rows : [el('p', { class: 'empty' }, 'Nothing reporting yet.')]));
+  } catch (e) {
+    /* the mirror restarting is normal; leave the last status on screen */
+  }
+}
+
+/* ---------- actions ---------- */
+
+$('add-calendar').onclick = () => {
+  const taken = new Set(config.calendars.map(c => c.id));
+  config.calendars.push({
+    id: newID('cal', taken),
+    name: 'Calendar ' + (config.calendars.length + 1),
+    url: '',
+    color: nextColour(),
+  });
+  touch(); renderCalendars(); renderSelected();
+};
+
+$('add-widget').onclick = () => {
+  const type = $('new-widget-type').value, d = descFor(type);
+  if (!d) return;
+  const taken = new Set(config.widgets.map(w => w.id));
+  const spot = firstFreeSpot(d.defaultSpan.cols, d.defaultSpan.rows);
+  const inst = {
+    id: newID(type, taken), type,
+    pos: { col: spot.col, row: spot.row, colSpan: d.defaultSpan.cols, rowSpan: d.defaultSpan.rows },
+    config: {},
+  };
+  config.widgets.push(inst);
+  touch(); select(inst.id);
+};
+
+function firstFreeSpot(w, h) {
+  const cols = gridCols(), rows = gridRows();
+  const taken = (c, r) => config.widgets.some(x => {
+    const p = x.pos;
+    return c < p.col + p.colSpan && p.col < c + w && r < p.row + p.rowSpan && p.row < r + h;
+  });
+  for (let r = 0; r <= rows - h; r++)
+    for (let c = 0; c <= cols - w; c++)
+      if (!taken(c, r)) return { col: c, row: r };
+  return { col: 0, row: 0 };
+}
+
+$('hostname').oninput = e => {
+  config.hostname = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  e.target.value = config.hostname;
+  $('hostpreview').textContent = (config.hostname || 'magicmirror') + '.local';
+  touch();
+};
+$('zipcode').oninput = e => { config.weather = config.weather || {}; config.weather.zipcode = e.target.value; touch(); };
+$('units').onchange = e => { config.units = e.target.value; touch(); };
+
+/* "prerelease" is the name the field originally had; a config on a device
+   outlives whatever we called a setting this week. */
+function isTestChannel(c) {
+  return ['test', 'prerelease', 'beta'].includes(String(c || '').trim().toLowerCase());
+}
+$('update-enabled').onchange = e => {
+  config.update = config.update || {};
+  config.update.enabled = e.target.value === 'on';
+  touch();
+};
+$('update-channel').onchange = e => {
+  config.update = config.update || {};
+  config.update.channel = e.target.value;
+  touch();
+};
+$('timezone').onchange = e => { config.timezone = e.target.value; touch(); };
+
+$('reload').onclick = () => {
+  if (dirty && !confirm('Discard your unsaved changes?')) return;
+  load().then(() => toast('Reloaded from the mirror'));
+};
+
+$('save').onclick = async () => {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      toast((body.error || 'Could not save.') + (body.note ? '\n' + body.note : ''), 'err');
+      return;
+    }
+    dirty = false;
+    $('dirty').style.display = 'none';
+    if (body.warnings && body.warnings.length) {
+      toast('Saved. Worth checking:\n• ' + body.warnings.join('\n• '), 'warn');
+    } else {
+      toast('Saved — the mirror has updated.');
+    }
+  } catch (e) {
+    toast('Could not reach the mirror: ' + e.message, 'err');
+  }
+};
+
+addEventListener('keydown', e => {
+  if (!selectedId) return;
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  const dirs = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const d = dirs[e.key];
+  if (!d) return;
+  e.preventDefault();
+
+  const inst = config.widgets.find(w => w.id === selectedId), p = inst.pos;
+  const desc = descFor(inst.type), cols = gridCols(), rows = gridRows();
+  if (e.shiftKey) {
+    p.colSpan = clamp(p.colSpan + d[0], desc ? desc.minSpan.cols : 1, cols - p.col);
+    p.rowSpan = clamp(p.rowSpan + d[1], desc ? desc.minSpan.rows : 1, rows - p.row);
+  } else {
+    p.col = clamp(p.col + d[0], 0, cols - p.colSpan);
+    p.row = clamp(p.row + d[1], 0, rows - p.rowSpan);
+  }
+  touch(); renderGrid(); renderSelected();
+});
+
+addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+load();
+setInterval(() => { if (location.hash === '#status') refreshStatus(); }, 5000);
+</script>

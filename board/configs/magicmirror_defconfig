@@ -1,0 +1,114 @@
+# Magic Mirror — Raspberry Pi Zero W
+#
+# Goal is a minimum viable image with networking and a framebuffer, booting
+# straight into the Go application. The rootfs is a cpio built into the
+# kernel, so the whole OS ships as one file (kernel.img) on a single FAT32
+# partition — which is what makes migrating from the v1 card a file copy
+# rather than a reflash, and what makes the OS impossible to corrupt on power
+# loss.
+
+# --- Target: BCM2835, ARM1176JZF-S, ARMv6 + VFP ---
+BR2_arm=y
+BR2_arm1176jzf_s=y
+BR2_ARM_EABIHF=y
+BR2_ARM_FPU_VFPV2=y
+
+# --- Toolchain ---
+# musl over glibc: smaller, and the Go binary is static anyway so only
+# wpa_supplicant, hostapd and dnsmasq actually link it.
+BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_KERNEL_HEADERS_AS_KERNEL=y
+
+# --- Init: BusyBox ---
+# systemd is out of the question at this size. BusyBox init respawns the app
+# in under a second, which is the mechanism that turns a crash into a blink
+# rather than the reboot v1 needed.
+BR2_INIT_BUSYBOX=y
+# Enables ntpd, which the default busybox config leaves out. Without a time
+# client this board never leaves 1970 and every TLS handshake fails.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/busybox.fragment"
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
+
+# --- Kernel ---
+# The Raspberry Pi fork rather than mainline: better brcmfmac and VC4 support
+# for this specific SoC, which is the whole reason the WiFi works at all.
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/raspberrypi/linux/archive/refs/tags/stable_20241008.tar.gz"
+BR2_LINUX_KERNEL_DEFCONFIG="bcmrpi"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/linux.fragment"
+BR2_LINUX_KERNEL_ZIMAGE=y
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2708-rpi-zero-w"
+
+# --- Rootfs: initramfs built into the kernel ---
+# A rootfs in RAM has nothing to corrupt when the power is pulled — stronger
+# than a read-only squashfs, which still has to survive a torn write. Costs
+# ~30MB of the 512MB available, which is noise.
+BR2_TARGET_ROOTFS_CPIO=y
+# Link the cpio into the kernel image. Without this Buildroot emits
+# rootfs.cpio.gz as a separate file that nothing loads, and the device boots
+# to a kernel panic with no root filesystem.
+BR2_TARGET_ROOTFS_INITRAMFS=y
+BR2_LINUX_KERNEL_CUSTOM_LOGO_PATH=""
+# No separate rootfs image; the cpio is linked into the kernel.
+# BR2_TARGET_ROOTFS_TAR is not set
+# BR2_TARGET_ROOTFS_EXT2 is not set
+
+# --- Firmware ---
+BR2_PACKAGE_RPI_FIRMWARE=y
+BR2_PACKAGE_RPI_FIRMWARE_BOOTCODE_BIN=y
+BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI=y
+BR2_PACKAGE_LINUX_FIRMWARE=y
+BR2_PACKAGE_LINUX_FIRMWARE_BRCM_BCM43XXX=y
+
+# --- Networking ---
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
+# No D-Bus: it would pull in a message bus to configure one radio.
+# BR2_PACKAGE_WPA_SUPPLICANT_DBUS is not set
+
+# AP fallback provisioning, so a WiFi change does not mean a card reader.
+BR2_PACKAGE_HOSTAPD=y
+BR2_PACKAGE_HOSTAPD_DRIVER_NL80211=y
+BR2_PACKAGE_DNSMASQ=y
+BR2_PACKAGE_IW=y
+
+# --- Filesystem repair ---
+#
+# fsck.vfat, so the device can repair its own boot partition at startup.
+# FAT has no journal, and this is an appliance people unplug rather than
+# shut down — an interrupted write leaves the filesystem inconsistent, and
+# a later write onto that inconsistency can orphan a whole file's clusters.
+# That is not hypothetical: it silently truncated kernel.img to zero bytes
+# and produced a device that would not boot at all.
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
+
+# --- Remote access ---
+#
+# Key-only SSH. Worth the ~1MB: most of the bring-up failures so far
+# (missing /sys, a deleted cfg80211 module, no clock) would have been
+# obvious in seconds from a shell, and were instead diagnosed over several
+# SD-card round trips. It is also what makes push-deploy possible.
+BR2_PACKAGE_DROPBEAR=y
+# No password login at all; the only credential is the authorized key in
+# the rootfs overlay.
+# BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS is not set
+
+# --- CA certificates for HTTPS ---
+# Go's crypto/tls needs a trust store; it does not carry one.
+BR2_PACKAGE_CA_CERTIFICATES=y
+
+# --- Deliberately excluded ---
+# No bluetooth, no ALSA, no USB storage, no netfilter, no IPv6 tooling, no
+# Python, no perl. Each is either unreachable on this device or unused by the
+# app, and all of them cost image size.
+
+# --- Image assembly ---
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/scripts/post-build.sh"
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/overlay"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_MAGICMIRROR_PATH)/scripts/post-image.sh"
+BR2_ROOTFS_POST_SCRIPT_ARGS="$(BR2_EXTERNAL_MAGICMIRROR_PATH)"

@@ -1,0 +1,49 @@
+# Magic Mirror — Raspberry Pi Zero W firmware configuration.
+#
+# The firmware reads this before any kernel exists, which is why the rainbow
+# test pattern can only be suppressed here and not replaced by anything the
+# application does.
+
+# 32-bit ARM.
+arm_64bit=0
+kernel=kernel.img
+
+# --- Display ---
+# The firmware sets the HDMI mode before Linux starts and bcm2708_fb inherits
+# that framebuffer, so these lines decide what resolution the app renders at.
+hdmi_force_hotplug=1
+hdmi_group=1
+hdmi_mode=16
+# 16 = 1920x1080 @ 60Hz
+disable_overscan=1
+
+# --- Branding ---
+# Suppress the rainbow test pattern. This is firmware-drawn, before the
+# kernel; nothing later can remove it, only avoid it.
+disable_splash=1
+
+# --- Memory ---
+# 64MB, matching v1. Do NOT lower this to 16.
+#
+# It is tempting to, since the app renders in software and never asks the GPU
+# for anything. But gpu_mem=16 makes the bootloader switch to the cut-down
+# firmware (start_cd.elf / fixup_cd.dat), which has essentially no display
+# support — and Buildroot does not even ship those files, so the result is a
+# Pi that never brings up HDMI at all.
+#
+# The VideoCore firmware is what sets the HDMI mode and creates the
+# framebuffer that bcm2708_fb then inherits. Starving it breaks the display
+# regardless of how the application draws.
+gpu_mem=64
+
+# --- Serial console ---
+# Cheap, and it is the only diagnostic channel when the display is the thing
+# that is broken.
+enable_uart=1
+
+# --- Deliberately absent ---
+# No `dtoverlay=sdio`. v1 needed it for Circle's own WiFi stack, but under
+# Linux the onboard BCM43430 is already described by bcm2708-rpi-zero-w.dtb,
+# and that overlay points SDIO at different GPIOs than the onboard radio
+# uses. Leaving it in is expected to break WiFi entirely — it is the main
+# reason a v1 card cannot simply be handed a new kernel.img.

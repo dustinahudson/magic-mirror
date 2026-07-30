@@ -1,0 +1,62 @@
+#!/bin/sh
+#
+# Restore the clock from the last known good time.
+#
+# The Pi Zero W has no RTC, so it boots at 1970 every time. NTP fixes that,
+# but only once the network is up — and in the meantime every HTTPS request
+# fails certificate validation, because from 1970 every certificate is "not
+# yet valid".
+#
+# So the last known time is persisted to the SD card while running and
+# restored here, before anything else. It is not accurate, but being a few
+# minutes stale is the difference between TLS working and TLS failing, and
+# it works with no network at all.
+#
+# Format is BusyBox date's native YYYYMMDDhhmm.ss, so this needs no
+# optional date features compiled in.
+#
+# Numbered S15 so it runs AFTER S10boot mounts /boot. As S05 it ran before
+# the partition holding the saved time was even mounted, so the restore
+# could never have worked.
+
+CLOCK=/boot/clock
+
+case "$1" in
+  start)
+    if [ ! -f "$CLOCK" ]; then
+      echo "clock: no saved time; starting from the epoch until NTP syncs"
+      exit 0
+    fi
+
+    saved=$(cat "$CLOCK" 2>/dev/null)
+    case "$saved" in
+      # Reject anything that is not the expected shape rather than handing
+      # garbage to date.
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9]) ;;
+      *)
+        echo "clock: saved time '$saved' is malformed; ignoring"
+        exit 0
+        ;;
+    esac
+
+    if date -u -s "$saved" >/dev/null 2>&1; then
+      echo "clock: restored to $(date -u '+%Y-%m-%d %H:%M:%S') UTC from last run"
+    else
+      echo "clock: could not restore saved time '$saved'"
+    fi
+    ;;
+
+  stop)
+    # Save on the way down too, so a clean shutdown loses nothing.
+    date -u +%Y%m%d%H%M.%S > "$CLOCK" 2>/dev/null || true
+    ;;
+
+  restart|reload)
+    "$0" start
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
