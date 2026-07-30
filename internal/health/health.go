@@ -43,7 +43,16 @@ type Monitor struct {
 	// soon as it touches the framebuffer.
 	healthyAfter time.Duration
 	marked       bool
+
+	// clockWritten throttles persisting the time; the SD card is FAT on a
+	// device people unplug, and there is no value in writing every second.
+	clockWritten time.Time
 }
+
+// clockInterval is how often the time is persisted. Five minutes bounds how
+// far behind a restored clock can be, which is well inside any certificate
+// validity window.
+const clockInterval = 5 * time.Minute
 
 // Options configures a Monitor.
 type Options struct {
@@ -128,6 +137,39 @@ func (m *Monitor) Pet() {
 
 	if !m.marked && time.Since(m.started) >= m.healthyAfter {
 		m.markHealthy()
+	}
+	m.persistClock()
+}
+
+// persistClock writes the current time to the state directory so the next
+// boot can restore it before the network is up.
+//
+// The Pi Zero W has no RTC. Without this it boots at 1970, and from 1970
+// every TLS certificate is "not yet valid" — so weather and calendar both
+// fail certificate validation until NTP completes, which needs a network
+// that may take a while or never arrive. A clock that is a few minutes
+// stale is the difference between HTTPS working and HTTPS failing.
+//
+// Written in BusyBox date's native YYYYMMDDhhmm.ss format so the init
+// script can restore it without any optional date features compiled in.
+// Only written once the year looks plausible, so a device that has not yet
+// synced never persists 1970 over a good value.
+func (m *Monitor) persistClock() {
+	if m.stateDir == "" {
+		return
+	}
+	now := time.Now().UTC()
+	if now.Year() < 2020 {
+		return
+	}
+	if now.Sub(m.clockWritten) < clockInterval {
+		return
+	}
+	m.clockWritten = now
+
+	path := filepath.Join(m.stateDir, "clock")
+	if err := os.WriteFile(path, []byte(now.Format("200601021504.05")+"\n"), 0o644); err != nil {
+		m.log.Debug("could not persist clock", "path", path, "err", err)
 	}
 }
 

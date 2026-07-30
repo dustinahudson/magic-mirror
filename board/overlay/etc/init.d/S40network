@@ -85,6 +85,28 @@ case "$1" in
     # The mirror should be drawing a clock within seconds regardless of
     # whether it has an address yet.
     udhcpc -b -i "$IFACE" -x hostname:magicmirror -t 5 -T 3 &
+
+    # Sync the clock once an address exists.
+    #
+    # This runs in the background because it must not delay boot, but it is
+    # load-bearing: with no RTC the device boots at 1970, and every HTTPS
+    # request fails certificate validation until the time is right. NTP is
+    # plain UDP with no certificate of its own, so it works from a wrong
+    # clock — which is what makes it the bootstrap.
+    (
+      for i in $(seq 1 30); do
+        [ -n "$(ip -4 addr show "$IFACE" 2>/dev/null | grep -o 'inet [0-9.]*')" ] && break
+        sleep 1
+      done
+      if ntpd -q -n -p pool.ntp.org >/dev/null 2>&1; then
+        say "clock synced: $(date -u '+%Y-%m-%d %H:%M:%S') UTC"
+        date -u +%Y%m%d%H%M.%S > /boot/clock 2>/dev/null || true
+      else
+        say "NTP sync failed; running on the restored clock"
+      fi
+      # Then keep it disciplined in the background.
+      ntpd -n -p pool.ntp.org >/dev/null 2>&1 &
+    ) &
     ;;
 
   stop)
