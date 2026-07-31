@@ -1,7 +1,7 @@
 # Build output
 /dist/
 /build/
-magicmirror
+/magicmirror
 *.test
 
 # Buildroot output (large, regenerable)
