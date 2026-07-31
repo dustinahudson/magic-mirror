@@ -77,6 +77,10 @@
   button.ghost { background: transparent; }
   button.danger { color: var(--err); background: transparent; border-color: transparent; }
   button.danger:hover { border-color: var(--err); }
+  /* A destructive action someone has to go looking for, rather than one
+     sitting beside the thing it removes, needs to look like a button. */
+  button.danger.outline { border-color: var(--line2); align-self: flex-start; }
+  button.danger.outline:hover { border-color: var(--err); }
 
   /* ---- grid editor ---- */
   #stage {
@@ -260,6 +264,30 @@
         </div>
       </div>
     </div>
+
+    <div class="card">
+      <h3>Start over</h3>
+      <p class="sub">Two ways to put this mirror back the way it came.</p>
+      <div class="row">
+        <div class="field">
+          <button id="reset-settings" class="danger outline">Reset all settings</button>
+          <span class="help">
+            Puts the layout, calendars, location and everything else on this
+            page back to how the mirror arrived, including its name. It stays
+            on your Wi-Fi and this page stays where it is.
+          </span>
+        </div>
+        <div class="field">
+          <button id="forget-wifi" class="danger outline">Forget the Wi-Fi network</button>
+          <span class="help">
+            The mirror leaves your network and offers <b>MagicMirror-Setup</b>
+            again, the way it did on its first day. Your settings are kept, but
+            you will need a phone to put it back online — and this page will
+            stop answering until you have.
+          </span>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section class="page" id="page-status">
@@ -298,13 +326,16 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 
-function toast(msg, kind = 'ok') {
+// ms is worth overriding when the message is an instruction rather than an
+// acknowledgement — "go and look for this network on your phone" has to
+// outlast the walk to fetch the phone.
+function toast(msg, kind = 'ok', ms = kind === 'err' ? 12000 : 3500) {
   const t = $('toast');
   t.textContent = msg;
   t.className = kind;
   t.style.display = 'block';
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => { t.style.display = 'none'; }, kind === 'err' ? 12000 : 3500);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, ms);
 }
 
 function touch() {
@@ -350,8 +381,17 @@ async function load() {
     fetch('/api/config').then(r => r.json()),
     fetch('/api/widget-types').then(r => r.json()),
   ]);
-  config = c;
   types = t || [];
+  adopt(c);
+  show((location.hash || '#layout').slice(1));
+}
+
+// adopt makes a configuration from the mirror the one this page is editing.
+// Split out of load() because a reset is handed its new configuration in the
+// reply rather than fetching it — asking would race the render loop and get
+// the settings that were just thrown away.
+function adopt(c) {
+  config = c || {};
   config.widgets = config.widgets || [];
   config.calendars = config.calendars || [];
   config.widgets.forEach(normalisePos);
@@ -360,7 +400,6 @@ async function load() {
   $('dirty').style.display = 'none';
 
   renderAll();
-  show((location.hash || '#layout').slice(1));
 }
 
 function normalisePos(inst) {
@@ -796,6 +835,63 @@ $('save').onclick = async () => {
     } else {
       toast('Saved — the mirror has updated.');
     }
+  } catch (e) {
+    toast('Could not reach the mirror: ' + e.message, 'err');
+  }
+};
+
+/* ---------- starting over ----------
+   Both of these throw something away that cannot be fetched back, so both ask
+   first, and both say what actually happens rather than "are you sure?". */
+
+$('reset-settings').onclick = async () => {
+  if (!confirm(
+    'Put every setting back to how the mirror arrived?\n\n'
+    + 'Your layout, calendars and location are replaced by the ones it shipped '
+    + 'with, and it goes back to being called magicmirror.local. '
+    + 'This cannot be undone.')) return;
+
+  try {
+    const res = await fetch('/api/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      toast((body.error || 'Could not reset.') + (body.note ? '\n' + body.note : ''), 'err');
+      return;
+    }
+    // The panel that was selected may not exist in the shipped arrangement.
+    selectedId = null;
+    adopt(body.config);
+    toast('Every setting is back to how the mirror arrived.');
+  } catch (e) {
+    toast('Could not reach the mirror: ' + e.message, 'err');
+  }
+};
+
+$('forget-wifi').onclick = async () => {
+  if (!confirm(
+    'Forget your Wi-Fi network?\n\n'
+    + 'The mirror leaves the network and offers MagicMirror-Setup instead. '
+    + 'You will need a phone to put it back online, and this page will stop '
+    + 'answering until you have.')) return;
+
+  try {
+    const res = await fetch('/api/forget-wifi', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      toast(body.error || 'Could not forget the network.', 'err');
+      return;
+    }
+    // The mirror is about to take the network away, so nothing more will
+    // arrive from it. Say what to do next and leave it on screen.
+    dirty = false;
+    $('dirty').style.display = 'none';
+    toast('The mirror is going back to setup mode.\n'
+      + 'Give it a minute, then join the ' + (body.ssid || 'MagicMirror-Setup')
+      + ' network from your phone and open the page it offers.', 'warn', 120000);
   } catch (e) {
     toast('Could not reach the mirror: ' + e.message, 'err');
   }

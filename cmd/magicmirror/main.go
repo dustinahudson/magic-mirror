@@ -233,9 +233,11 @@ func run() error {
 			StateDir:   *stateDir,
 		}
 		// The setup portal borrows this listener rather than opening its
-		// own on the same port.
+		// own on the same port, and lends the settings page the one button
+		// that can send the mirror back to it.
 		if coord != nil {
 			wopts.Portal = coord.Mux
+			wopts.ForgetWiFi = coord.Forget
 		}
 		ws, err := web.New(wopts, applier, data, log)
 		if err != nil {

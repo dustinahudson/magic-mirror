@@ -2,6 +2,8 @@ package provision
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -286,6 +288,38 @@ func (c *Coordinator) runPortal(ctx context.Context) error {
 	c.Log.Info("credentials accepted; returning to client mode")
 	c.setState(State{Mode: ModeConnecting})
 	return c.Portal.Reconnect(ctx)
+}
+
+// Forget erases the saved credentials and takes the link down, so the mirror
+// returns to setup mode.
+//
+// Deleting the file is not enough on its own. The supplicant is already
+// associated and would hold that association until the next boot, so Run would
+// go on seeing a link and never start the portal — the mirror would look like
+// it had ignored the request until someone pulled the power. So the link goes
+// too, and the ordinary loop does the rest: with no credentials on disk it
+// skips the grace period and brings the portal up on the next poll.
+func (c *Coordinator) Forget(ctx context.Context) error {
+	if c.Portal.WPAConfPath == "" {
+		return errors.New("this mirror does not manage its own wifi credentials")
+	}
+	if err := os.Remove(c.Portal.WPAConfPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("erase wifi credentials: %w", err)
+	}
+
+	// Order matters: udhcpc first, or it renews the lease against a link the
+	// supplicant is about to drop.
+	_, _ = c.Portal.Runner.Run(ctx, "killall", "udhcpc")
+	_, _ = c.Portal.Runner.Run(ctx, "killall", "wpa_supplicant")
+	if _, err := c.Portal.Runner.Run(ctx, "ip", "addr", "flush", "dev", c.Portal.Interface); err != nil {
+		// Not fatal. The address may already be gone, and the portal flushes
+		// again on the way up.
+		c.Log.Warn("could not flush interface address", "err", err)
+	}
+
+	c.Log.Warn("wifi credentials erased; returning to setup mode",
+		"interface", c.Portal.Interface, "ssid", c.Portal.SSID)
+	return nil
 }
 
 func fileExists(path string) bool {
