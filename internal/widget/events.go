@@ -137,6 +137,13 @@ func (w *UpcomingEvents) Render(dst *image.RGBA, bounds image.Rectangle, ctx Con
 	if err != nil {
 		return
 	}
+	// The time column runs a step larger than the other small text. It is the
+	// second thing read on every row — what, then when — rather than the
+	// footnote that a location or a staleness note is.
+	timeFace, err := ctx.Fonts.Face(render.Light, max(12, titleSize*5/6))
+	if err != nil {
+		return
+	}
 
 	if !ok || len(events) == 0 {
 		msg := "Nothing scheduled"
@@ -193,9 +200,9 @@ func (w *UpcomingEvents) Render(dst *image.RGBA, bounds image.Rectangle, ctx Con
 
 		// Time on the right, title fills what remains.
 		when := formatEventTime(e, local)
-		ww := metaFace.Measure(when)
-		metaFace.DrawTop(dst, bounds.Max.X-ww, y+(titleFace.Height()-metaFace.Height())/2,
-			when, render.Muted)
+		ww := timeFace.Measure(when)
+		timeFace.DrawTop(dst, bounds.Max.X-ww, y+(titleFace.Height()-timeFace.Height())/2,
+			when, render.Detail)
 
 		titleW := bounds.Max.X - ww - x - 10
 		titleFace.DrawTop(dst, x, y, titleFace.Truncate(e.Summary, titleW), render.Primary)

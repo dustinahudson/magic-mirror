@@ -20,6 +20,13 @@ var (
 	Muted      = color.RGBA{120, 120, 120, 255}
 	Faint      = color.RGBA{70, 70, 70, 255}
 
+	// Detail sits between Secondary and Muted, for small supporting figures
+	// that are nonetheless read on purpose — wind and sun times, an event's
+	// time column. Muted is the right weight for a label you are meant to skim
+	// past; these are numbers someone walks up to the glass to find, and at
+	// 120 behind half-silvered glass they were being lost.
+	Detail = color.RGBA{150, 150, 150, 255}
+
 	// Status colours, used sparingly — a mirror covered in traffic lights
 	// stops being a mirror.
 	OK    = color.RGBA{82, 250, 127, 255}

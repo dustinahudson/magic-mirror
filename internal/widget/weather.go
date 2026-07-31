@@ -107,6 +107,13 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 	if err != nil {
 		return
 	}
+	// The detail row runs a step larger than the rest of the small text. It
+	// carries the only numbers on this tile besides the temperature, and read
+	// from across a room at the small size they blurred into a grey band.
+	detailFace, err := ctx.Fonts.Face(render.Light, max(13, subSize*5/6))
+	if err != nil {
+		return
+	}
 
 	st.DrawMarker(dst, bounds, ctx, max(12, subSize*3/4))
 
@@ -133,7 +140,7 @@ func (w *Weather) Render(dst *image.RGBA, bounds image.Rectangle, ctx Context) {
 	// temperature is the one element that can shrink without losing
 	// information, since the number stays legible at any size.
 	if ok {
-		y = w.drawDetailRow(dst, image.Rect(x, y, bounds.Max.X, bounds.Max.Y), ctx, cond, smallFace)
+		y = w.drawDetailRow(dst, image.Rect(x, y, bounds.Max.X, bounds.Max.Y), ctx, cond, detailFace)
 	}
 
 	// Temperature, with the icon to its right. Refit to whatever vertical
@@ -270,7 +277,7 @@ func (w *Weather) drawDetailRow(dst *image.RGBA, area image.Rectangle, ctx Conte
 		if x+face.Measure(p.text) > area.Max.X {
 			break
 		}
-		x = face.DrawTop(dst, x, y, p.text, render.Muted)
+		x = face.DrawTop(dst, x, y, p.text, render.Detail)
 	}
 
 	return y + face.Height() + 4
