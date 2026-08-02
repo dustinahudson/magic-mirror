@@ -749,15 +749,46 @@ async function refreshStatus() {
 
 /* ---------- actions ---------- */
 
+/* A panel with no calendars ticked shows all of them, so a first calendar
+   appears on the mirror without anyone touching the Layout tab. A panel with
+   some ticked shows only those — and used to go on showing only those after a
+   new calendar was added, which is the same thing as the new calendar being
+   invisible. Nobody adds a calendar in order to not see it, and the panel that
+   needs editing is on another tab, so the omission was easy to miss and hard
+   to explain.
+
+   So a new calendar joins every panel that names its calendars explicitly.
+   Panels left on "all" are not touched: writing the id into those would turn
+   "everything, including whatever comes later" into a fixed list that only
+   looks the same today. */
+function linkFeedToPanels(feedID) {
+  let added = 0;
+  for (const inst of config.widgets) {
+    const d = descFor(inst.type);
+    if (!d || !(d.fields || []).some(f => f.type === 'feeds')) continue;
+    const sel = inst.config && inst.config.feeds;
+    if (!Array.isArray(sel) || sel.length === 0) continue;
+    if (!sel.includes(feedID)) { sel.push(feedID); added++; }
+  }
+  return added;
+}
+
 $('add-calendar').onclick = () => {
   const taken = new Set(config.calendars.map(c => c.id));
-  config.calendars.push({
+  const feed = {
     id: newID('cal', taken),
     name: 'Calendar ' + (config.calendars.length + 1),
     url: '',
     color: nextColour(),
-  });
+  };
+  config.calendars.push(feed);
+
+  const linked = linkFeedToPanels(feed.id);
   touch(); renderCalendars(); renderSelected();
+  if (linked) {
+    toast('Added to ' + linked + ' panel' + (linked === 1 ? '' : 's')
+      + ' that list their calendars. Untick it under Layout to leave it off one.');
+  }
 };
 
 $('add-widget').onclick = () => {
