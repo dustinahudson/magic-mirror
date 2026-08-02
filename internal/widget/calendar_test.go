@@ -38,7 +38,7 @@ func timed(summary string, hour int) ics.Event {
 func plan(t *testing.T, events []ics.Event, room int) ([]eventChip, int) {
 	t.Helper()
 	face := testFace(t)
-	return planEvents(events, face, testCellW, face.Height()*2/3, room, time.UTC)
+	return planEvents(events, face, testCellW, face.Height()*2/3, room, time.UTC, 0)
 }
 
 // The reported symptom: a title long enough to need the room should use it
