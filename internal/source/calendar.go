@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +131,10 @@ func (c *CalendarSource) Fetch(ctx context.Context) (any, error) {
 			len(c.Feeds), summarise(out.FeedErrors))
 	}
 
+	// Before sorting, while the events are still grouped by feed in the order
+	// the feeds are configured — which is what decides who wins a duplicate.
+	out.Events = dedupeAcrossFeeds(out.Events)
+
 	sort.Slice(out.Events, func(i, j int) bool {
 		return out.Events[i].Start.Before(out.Events[j].Start)
 	})
@@ -138,6 +143,77 @@ func (c *CalendarSource) Fetch(ctx context.Context) (any, error) {
 		out.Truncated = true
 	}
 	return out, nil
+}
+
+// dedupeAcrossFeeds drops an event that an earlier feed already supplied.
+//
+// Households share calendars. The same holiday, the same school closure, the
+// same trip is invited to two people and lands in both their feeds, and the
+// mirror drew it twice — two bars in a row, or the same title stacked in one
+// day cell, which reads as two commitments rather than one.
+//
+// The winner is whichever feed comes first in the configuration, so the event
+// keeps that calendar's colour. That makes the ordering on the Calendars tab
+// meaningful: put the calendar whose colour you want to see at the top.
+//
+// Two ways of recognising the same event, because the two failure modes are
+// different:
+//
+//   - Same UID at the same start. An event genuinely shared between accounts
+//     carries the same UID, and this catches it even if someone renamed their
+//     copy.
+//   - Same title at the same start. Copied rather than shared events get a
+//     fresh UID, so the UID says nothing, and the title is all that is left.
+//
+// The start time is part of both keys, and that is not optional. Every
+// occurrence of a recurring event carries the *same* UID — the expansion
+// copies the base event and moves only the times — so keying on UID alone
+// would collapse a weekly standup into a single Monday.
+//
+// Only duplicates across different feeds are removed. Two identical entries
+// inside one calendar are that calendar's business: they are far more likely
+// to be two real bookings, and silently hiding one would be a mirror lying
+// about what is in the feed it was given.
+func dedupeAcrossFeeds(events []ics.Event) []ics.Event {
+	if len(events) < 2 {
+		return events
+	}
+
+	// key -> the feed that claimed it.
+	claimed := make(map[string]string, len(events)*2)
+	out := make([]ics.Event, 0, len(events))
+
+	for _, e := range events {
+		at := strconv.FormatInt(e.Start.Unix(), 10)
+		title := strings.ToLower(strings.TrimSpace(e.Summary))
+
+		keys := make([]string, 0, 2)
+		if e.UID != "" {
+			keys = append(keys, "u\x00"+e.UID+"\x00"+at)
+		}
+		if title != "" {
+			keys = append(keys, "t\x00"+title+"\x00"+at+"\x00"+strconv.FormatBool(e.AllDay))
+		}
+
+		duplicate := false
+		for _, k := range keys {
+			if owner, ok := claimed[k]; ok && owner != e.FeedID {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+
+		for _, k := range keys {
+			if _, ok := claimed[k]; !ok {
+				claimed[k] = e.FeedID
+			}
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func (c *CalendarSource) fetchFeed(ctx context.Context, feed Feed, opts ics.Options) ([]ics.Event, bool, error) {
