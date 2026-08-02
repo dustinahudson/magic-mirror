@@ -14,12 +14,12 @@ function body. **The render loop and the network fetch are one thread of control
 
 Everything follows from that:
 
-| Symptom | Mechanism |
-|---|---|
-| Screen freezes during refresh | The clock cannot redraw until `FetchCalendar` returns. Not tuning — shape. |
-| API down ⇒ boot loop | `m_Watchdog.Start(15)` (line 600) arms a 15s hardware watchdog per iteration. A hung API blocks past 15s ⇒ reboot ⇒ fetch again ⇒ hang. The watchdog cannot distinguish "wedged" from "waiting on a slow server," because here they are the same state. |
-| Network drop ⇒ hard reset | `WiFiMonitor` escalates Healthy→Degraded→Kicked→**Dead→reboot** (line 452). Reboot is the *first* recovery tool because nothing runs beneath the app. When reboot doesn't take, the power cable is what's left. |
-| Failures are invisible | `weather_widget.cpp:38-48` seeds a complete fabricated record — 72°F, "Partly Cloudy", Dallas TX, sunrise 6:45am. A failed fetch renders as confident, plausible, invented weather. You cannot tell working from broken by looking at the mirror, including during a hung fetch. |
+| Symptom                       | Mechanism                                                                                                                                                                                                                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Screen freezes during refresh | The clock cannot redraw until `FetchCalendar` returns. Not tuning — shape.                                                                                                                                                                                                       |
+| API down ⇒ boot loop          | `m_Watchdog.Start(15)` (line 600) arms a 15s hardware watchdog per iteration. A hung API blocks past 15s ⇒ reboot ⇒ fetch again ⇒ hang. The watchdog cannot distinguish "wedged" from "waiting on a slow server," because here they are the same state.                          |
+| Network drop ⇒ hard reset     | `WiFiMonitor` escalates Healthy→Degraded→Kicked→**Dead→reboot** (line 452). Reboot is the _first_ recovery tool because nothing runs beneath the app. When reboot doesn't take, the power cable is what's left.                                                                  |
+| Failures are invisible        | `weather_widget.cpp:38-48` seeds a complete fabricated record — 72°F, "Partly Cloudy", Dallas TX, sunrise 6:45am. A failed fetch renders as confident, plausible, invented weather. You cannot tell working from broken by looking at the mirror, including during a hung fetch. |
 
 Secondary: nothing is testable without flashing an SD card. `src/core/application.cpp` is
 vestigial (its `Render()` draws a debug grid), `font_renderer.cpp` and `loading_screen.cpp`
@@ -35,12 +35,12 @@ aren't in the Makefile's `OBJS` at all, and there are two separate `http_client.
 
 ## Decisions
 
-| Area | Decision |
-|---|---|
-| Rendering | Pure Go → `/dev/fb0`. No cgo, no LVGL. |
-| Provisioning | Boot-partition file first, hostapd AP portal as fallback. |
-| Updates | Binary swap with automatic rollback to previous binary. |
-| Repo | Clean replacement on branch `buildroot-go`; history preserved, old build at tag `v0.14.0`. |
+| Area         | Decision                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| Rendering    | Pure Go → `/dev/fb0`. No cgo, no LVGL.                                                     |
+| Provisioning | Boot-partition file first, hostapd AP portal as fallback.                                  |
+| Updates      | Binary swap with automatic rollback to previous binary.                                    |
+| Repo         | Clean replacement on branch `buildroot-go`; history preserved, old build at tag `v0.14.0`. |
 
 Rendering rationale: LVGL requires all `lv_*` calls on one thread, so the cgo route forces
 fetched data across a lock into the UI thread — reintroducing exactly the coupling that
@@ -68,14 +68,14 @@ now reboots, "network stalled" does not.
 
 ## Failure handling
 
-**Fetch** — every request carries `context.WithTimeout`. Failure is a *state*, not a fatal:
+**Fetch** — every request carries `context.WithTimeout`. Failure is a _state_, not a fatal:
 last-known-good data stays on screen with a staleness marker, retried with exponential
 backoff + jitter. Per-source last-success and last-error are surfaced on screen and in the
 web UI.
 
 **No placeholder data — ever.** A mirror that displays invented values is worse than one
 displaying nothing, because it destroys the operator's ability to detect a fault. Absence
-is a *rendered state* — dashes, a skeleton, a staleness badge — never a fabricated value.
+is a _rendered state_ — dashes, a skeleton, a staleness badge — never a fabricated value.
 
 The type system enforces this rather than discipline. A Go zero-value struct is exactly
 the hazard that bit v1, so sources never hand out bare structs:
@@ -89,8 +89,8 @@ type Reading[T any] struct {
 }
 ```
 
-`Status == Never` is the boot state and renders as placeholder *chrome*, not placeholder
-*data*. A widget cannot accidentally paint a zero value as real, because reaching `Value`
+`Status == Never` is the boot state and renders as placeholder _chrome_, not placeholder
+_data_. A widget cannot accidentally paint a zero value as real, because reaching `Value`
 means reading `Status` first.
 
 **WiFi escalation ladder** — each rung has a dwell time; success resets to the top.
@@ -146,17 +146,17 @@ netfilter, no sound). Packages: `wpa_supplicant` (nl80211, no dbus), `hostapd`,
 The Go binary is `CGO_ENABLED=0 GOARCH=arm GOARM=6` — fully static, no libc dependency.
 Only wpa_supplicant/hostapd/dnsmasq link musl.
 
-The Go binary lives on the FAT partition as `mm.current`, *not* inside the initramfs — so
+The Go binary lives on the FAT partition as `mm.current`, _not_ inside the initramfs — so
 app updates never rebuild the kernel, and the two update tiers stay independent.
 
 Rough budget:
 
-| | |
-|---|---|
-| Pi boot firmware (`bootcode.bin`, `start.elf`, `fixup.dat`, dtb) | 3.0MB |
-| `kernel.img` — zImage + initramfs (busybox, wpa_supplicant, hostapd, dnsmasq, brcm firmware) | 11MB |
-| `mm.current` — static Go binary, `-ldflags="-s -w"`, fonts + icons embedded | 9.1MB |
-| **Total** | **23MB** |
+|                                                                                              |          |
+| -------------------------------------------------------------------------------------------- | -------- |
+| Pi boot firmware (`bootcode.bin`, `start.elf`, `fixup.dat`, dtb)                             | 3.0MB    |
+| `kernel.img` — zImage + initramfs (busybox, wpa_supplicant, hostapd, dnsmasq, brcm firmware) | 11MB     |
+| `mm.current` — static Go binary, `-ldflags="-s -w"`, fonts + icons embedded                  | 9.1MB    |
+| **Total**                                                                                    | **23MB** |
 
 These are measured from a completed `make image`, not estimated. Getting
 there needed three fixes the first build exposed: linux-firmware ships 48
@@ -206,7 +206,7 @@ exactly one thing: download a single release asset to `SD:/kernel.new` and renam
 2. **`cmdline.txt` is `console=serial0,115200`.** `serial0` is a device-tree alias, not
    something Linux resolves; it wants `ttyAMA0`. Not fatal to boot, but it means no serial
    output at exactly the moment you'd need it.
-3. **No rollback, and this is the fatal one.** Line 211 does `f_unlink(KERNEL_IMG)` *before*
+3. **No rollback, and this is the fatal one.** Line 211 does `f_unlink(KERNEL_IMG)` _before_
    the rename — the old kernel is deleted first. If the Linux image fails to come up for
    any reason, there is no previous kernel and the device is recoverable only by pulling
    the card.
@@ -232,10 +232,10 @@ of the card's boot files first.
 
 Two tiers, both with rollback:
 
-| Tier | Payload | Frequency | Rollback |
-|---|---|---|---|
-| **App** | `mm.current` (~11MB) | often | keep `mm.previous`; init reverts after 3 failed health markers |
-| **OS** | `kernel.img` (~13MB) | rare | keep `kernel.prev.img`; initramfs `/init` reverts and reboots |
+| Tier    | Payload              | Frequency | Rollback                                                       |
+| ------- | -------------------- | --------- | -------------------------------------------------------------- |
+| **App** | `mm.current` (~11MB) | often     | keep `mm.previous`; init reverts after 3 failed health markers |
+| **OS**  | `kernel.img` (~13MB) | rare      | keep `kernel.prev.img`; initramfs `/init` reverts and reboots  |
 
 OS rollback works on a Pi Zero W without any bootloader support: `/init` runs from RAM
 before anything else is mounted, so it can mount the FAT partition, read a boot-attempt
@@ -247,7 +247,7 @@ the thing it's replacing.
 
 ## Boot presentation
 
-The rainbow test pattern is drawn by the *firmware* (`start.elf`) before any kernel exists,
+The rainbow test pattern is drawn by the _firmware_ (`start.elf`) before any kernel exists,
 so it can only be suppressed, never replaced in place. Branding is therefore a matter of
 suppressing every stock artefact and owning the screen from the earliest moment we can.
 
@@ -261,11 +261,11 @@ quiet loglevel=0 vt.global_cursor_default=0   # kernel log spew + blinking curso
 
 That leaves a black screen from firmware handoff until the app paints. Filling it:
 
-| Stage | When | What's shown |
-|---|---|---|
-| Firmware | 0–2s | black (`disable_splash=1`) |
+| Stage             | When   | What's shown                                                 |
+| ----------------- | ------ | ------------------------------------------------------------ |
+| Firmware          | 0–2s   | black (`disable_splash=1`)                                   |
 | Kernel fbcon init | ~1s in | **custom `logo_linux_clut224.ppm`** — earliest possible logo |
-| App start | ~6–10s | real branded splash, then live boot status |
+| App start         | ~6–10s | real branded splash, then live boot status                   |
 
 The kernel logo is `CONFIG_LOGO` with our own 224-colour PPM. It's the earliest a logo can
 appear, at the cost of a limited palette and top-left placement (centering needs a patch —
@@ -332,9 +332,12 @@ Config carries widget settings opaquely:
   "timezone": "America/Chicago",
   "layout": { "cols": 12, "rows": 16, "padding": 20, "gap": 5 },
   "widgets": [
-    { "id": "events-1", "type": "upcoming_events",
+    {
+      "id": "events-1",
+      "type": "upcoming_events",
       "pos": { "col": 0, "row": 11, "colSpan": 4, "rowSpan": 5 },
-      "config": { "maxEvents": 6, "horizonDays": 14, "showLocation": true } }
+      "config": { "maxEvents": 6, "horizonDays": 14, "showLocation": true }
+    }
   ]
 }
 ```
@@ -427,17 +430,17 @@ Each one ends at a bootable card.
    with datetime as its first consumer. Built against the registry from here on; nothing
    is retrofitted later.
 4. **Network.** wpa_supplicant, DHCP, IP on screen, escalation ladder.
-   *Acceptance: pull the AP's power; device recovers without reboot.*
+   _Acceptance: pull the AP's power; device recovers without reboot._
 5. **Data.** Weather, forecast, ICS behind the snapshot store.
-   *Acceptance: point a source at a tarpit; clock keeps ticking, no reboot.* ← the bug
+   _Acceptance: point a source at a tarpit; clock keeps ticking, no reboot._ ← the bug
 6. **Widgets.** Remaining layout ported to parity with v0.14.0.
 7. **Config web UI.** Generic form rendering from widget descriptors; add, remove, retype
-   and reposition widgets live. *Acceptance: save a deliberately invalid widget config;
-   the mirror keeps running on the previous one and shows the error in the UI.*
+   and reposition widgets live. _Acceptance: save a deliberately invalid widget config;
+   the mirror keeps running on the previous one and shows the error in the UI._
 8. **AP provisioning portal.**
 9. **Update + rollback**, both tiers, plus `scripts/migrate.sh`.
-   *Acceptance: ship a deliberately broken binary; device reverts. Ship a deliberately
-   broken kernel; initramfs `/init` reverts it.*
+   _Acceptance: ship a deliberately broken binary; device reverts. Ship a deliberately
+   broken kernel; initramfs `/init` reverts it._
 10. **Size and boot-time pass.**
 
 Milestones 4, 5 and 9 have adversarial acceptance criteria on purpose — those are the three
