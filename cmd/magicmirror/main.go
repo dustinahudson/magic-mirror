@@ -413,12 +413,22 @@ func renderLoop(
 	}
 }
 
-// loadConfig reads the config, falling back to defaults when the file is
-// missing.
+// loadConfig reads the config, falling back to defaults when the file cannot
+// be used.
 //
 // A missing config on first boot is normal, not an error — the mirror should
-// come up showing something and let you fix it from the web UI. A *corrupt*
-// config is different and is reported.
+// come up showing something and let you fix it from the web UI.
+//
+// A corrupt config takes the same path, for a harder-won reason. Returning the
+// error here exits the process, mm-supervise restarts it, the same bad bytes
+// fail again, and the device sits at a blank screen with the explanation in a
+// log file that is only reachable by pulling the card. Reporting a fault to
+// somebody who cannot see the report is the same as not reporting it. Coming
+// up on defaults keeps the screen lit and the web UI answering, which is what
+// makes the config fixable in place.
+//
+// The bad file is deliberately left alone: it is the only copy of whatever the
+// user had configured, and staying readable is what makes recovery possible.
 func loadConfig(path string, log *slog.Logger) (config.Config, []string, error) {
 	cfg, warnings, err := config.Load(path)
 	if err == nil {
@@ -428,7 +438,9 @@ func loadConfig(path string, log *slog.Logger) (config.Config, []string, error) 
 		log.Warn("no config file; using defaults", "path", path)
 		return config.Default(), nil, nil
 	}
-	return config.Config{}, warnings, err
+	log.Error("config unusable; starting on defaults so the mirror stays reachable",
+		"path", path, "err", err)
+	return config.Default(), warnings, nil
 }
 
 func errUnwrap(err error) error {
