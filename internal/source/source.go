@@ -42,6 +42,22 @@ type Fetcher interface {
 	Fetch(ctx context.Context) (any, error)
 }
 
+// Networked is the optional half of Fetcher, implemented by sources that
+// cannot possibly succeed until the link carries traffic.
+//
+// Optional on purpose: a source that works offline — the clock, the local IP —
+// must keep publishing while there is no network, because those are exactly
+// the readings someone needs on screen while they are still setting the WiFi
+// up. Only sources that reach the internet declare themselves here.
+type Networked interface {
+	NeedsNetwork() bool
+}
+
+func needsNetwork(f Fetcher) bool {
+	n, ok := f.(Networked)
+	return ok && n.NeedsNetwork()
+}
+
 // Manager runs fetchers and publishes their results.
 type Manager struct {
 	store *store.Store
@@ -49,6 +65,11 @@ type Manager struct {
 
 	mu       sync.Mutex
 	fetchers []Fetcher
+
+	// ready gates the first attempt of networked fetchers; grace bounds how
+	// long that wait is allowed to last. Nil ready means fetch immediately.
+	ready <-chan struct{}
+	grace time.Duration
 
 	// now and after are injectable so tests can drive time without sleeping.
 	now   func() time.Time
@@ -74,6 +95,65 @@ func (m *Manager) Add(f Fetcher) {
 		// Data older than three intervals is stale even if no fetch has
 		// failed — covers a fetcher goroutine that somehow stops running.
 		m.store.SetTTL(f.Key(), 3*f.Interval())
+	}
+}
+
+// WaitForNetwork holds the first attempt of every networked fetcher until
+// ready is closed, giving up after grace and attempting anyway.
+//
+// This exists because failing early is not free. A fetcher that starts before
+// the radio has associated does not simply miss once — it fails, doubles its
+// backoff, fails again, and arrives at a multi-minute wait while the link is
+// still coming up. Boot attempts land at 0s, 15s, 45s, 105s, 225s; the network
+// appears around 30s; and the first calendar therefore shows up somewhere near
+// the five minute mark, on a display whose whole job is being glanceable.
+//
+// Waiting for the link inverts that: the first attempt happens when it can
+// succeed, with the backoff still at its minimum.
+//
+// grace is the safety valve. If the link never comes up — or the thing
+// reporting on it is wrong — fetching late still beats never fetching, so the
+// wait is bounded and the old behaviour resumes.
+func (m *Manager) WaitForNetwork(ready <-chan struct{}, grace time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ready = ready
+	m.grace = grace
+}
+
+// awaitNetwork blocks until the link is usable, the grace period expires, or
+// ctx is cancelled. It reports whether fetching should proceed.
+func (m *Manager) awaitNetwork(ctx context.Context, log *slog.Logger) bool {
+	m.mu.Lock()
+	ready, grace := m.ready, m.grace
+	m.mu.Unlock()
+
+	if ready == nil {
+		return true
+	}
+	// Already up: say nothing and get on with it. This is the common case on
+	// every fetch after the first.
+	select {
+	case <-ready:
+		return true
+	default:
+	}
+
+	log.Info("holding first fetch until the link is up")
+
+	var expired <-chan time.Time
+	if grace > 0 {
+		expired = m.after(grace)
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-ready:
+		log.Info("link is up; fetching now")
+		return true
+	case <-expired:
+		log.Warn("link still not up; fetching anyway", "waited", grace)
+		return true
 	}
 }
 
@@ -110,6 +190,10 @@ func (m *Manager) runOne(ctx context.Context, f Fetcher) {
 	key := f.Key()
 	backoff := minBackoff
 	log := m.log.With("source", key)
+
+	if needsNetwork(f) && !m.awaitNetwork(ctx, log) {
+		return
+	}
 
 	for {
 		m.store.Attempt(key)

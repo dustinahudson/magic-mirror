@@ -81,6 +81,9 @@ func NewCalendar(feeds []Feed, loc *time.Location, interval time.Duration) *Cale
 
 func (c *CalendarSource) Key() string             { return KeyCalendar }
 func (c *CalendarSource) Interval() time.Duration { return c.Interval_ }
+
+// NeedsNetwork reports that every feed is an HTTP fetch.
+func (c *CalendarSource) NeedsNetwork() bool { return true }
 func (c *CalendarSource) Timeout() time.Duration {
 	// Scale with feed count, since they are fetched in sequence, but keep a
 	// hard ceiling. This is the deadline that turns a dead calendar server

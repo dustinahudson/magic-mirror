@@ -105,6 +105,9 @@ func (w *WeatherSource) Key() string             { return KeyWeather }
 func (w *WeatherSource) Interval() time.Duration { return w.Interval_ }
 func (w *WeatherSource) Timeout() time.Duration  { return 25 * time.Second }
 
+// NeedsNetwork reports that geocoding and the forecast both leave the house.
+func (w *WeatherSource) NeedsNetwork() bool { return true }
+
 func (w *WeatherSource) Fetch(ctx context.Context) (any, error) {
 	loc, err := w.location(ctx)
 	if err != nil {

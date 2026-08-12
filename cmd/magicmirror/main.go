@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,6 +42,14 @@ import (
 
 // version is stamped at build time with -ldflags "-X main.version=...".
 var version = "dev"
+
+// firstFetchGrace bounds how long the calendar and weather wait for the link
+// before trying anyway.
+//
+// Long enough to cover association, DHCP and the first DNS answer on a cold
+// boot; short enough that a mirror whose supervisor is wrong about the network
+// still fills its widgets within a minute or two rather than never.
+const firstFetchGrace = 90 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -147,6 +156,22 @@ func run() error {
 	for _, f := range buildSources(cfg, loc) {
 		mgr.Add(f)
 	}
+
+	// Hold the calendar and weather until the link actually carries traffic.
+	//
+	// The wifi supervisor below is the thing that knows, but it is built after
+	// this point, so the channel is made here and closed from its callback.
+	// Without a supervisor there is nobody to ask — a laptop preview run, say —
+	// so the gate opens immediately and nothing changes.
+	netReady := make(chan struct{})
+	var netOnce sync.Once
+	markNetworkUp := func() { netOnce.Do(func() { close(netReady) }) }
+	if *wifiIface == "" {
+		markNetworkUp()
+	} else {
+		mgr.WaitForNetwork(netReady, firstFetchGrace)
+	}
+
 	fetchDone := make(chan struct{})
 	go func() {
 		defer close(fetchDone)
@@ -207,6 +232,10 @@ func run() error {
 		}
 		sup.OnStatus = func(st netmon.Status) {
 			if st.Up {
+				// The supervisor's probe resolves a name and completes a TCP
+				// handshake, which is a stronger statement than "associated"
+				// and exactly what a fetch is about to need.
+				markNetworkUp()
 				data.Success(netmon.KeyNetwork, st)
 				return
 			}
