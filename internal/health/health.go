@@ -21,6 +21,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/dustinahudson/magic-mirror/internal/durable"
 )
 
 // Linux watchdog ioctls.
@@ -168,7 +170,7 @@ func (m *Monitor) persistClock() {
 	m.clockWritten = now
 
 	path := filepath.Join(m.stateDir, "clock")
-	if err := os.WriteFile(path, []byte(now.Format("200601021504.05")+"\n"), 0o644); err != nil {
+	if err := durable.WriteFile(path, []byte(now.Format("200601021504.05")+"\n"), 0o644); err != nil {
 		m.log.Debug("could not persist clock", "path", path, "err", err)
 	}
 }
@@ -187,13 +189,16 @@ func (m *Monitor) markHealthy() {
 
 	marker := filepath.Join(m.stateDir, "health")
 	body := fmt.Sprintf("healthy at %s\n", time.Now().Format(time.RFC3339))
-	if err := os.WriteFile(marker, []byte(body), 0o644); err != nil {
+	if err := durable.WriteFile(marker, []byte(body), 0o644); err != nil {
 		m.log.Warn("could not write health marker", "path", marker, "err", err)
 		return
 	}
 
+	// A half-written counter is not a cosmetic problem: mm-supervise reads it
+	// to decide whether to roll back the binary. Zero-length reads as 0, which
+	// silently forgives failures that should have triggered a revert.
 	failures := filepath.Join(m.stateDir, "failures")
-	if err := os.WriteFile(failures, []byte("0\n"), 0o644); err != nil {
+	if err := durable.WriteFile(failures, []byte("0\n"), 0o644); err != nil {
 		m.log.Warn("could not clear failure counter", "path", failures, "err", err)
 	}
 

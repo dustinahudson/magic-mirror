@@ -15,10 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/dustinahudson/magic-mirror/internal/durable"
 	"github.com/dustinahudson/magic-mirror/internal/ics"
 	"github.com/dustinahudson/magic-mirror/internal/layout"
 	"github.com/dustinahudson/magic-mirror/internal/update"
@@ -401,12 +401,12 @@ func (c *Config) fillDefaults() {
 	}
 }
 
-// Save writes the config atomically.
+// Save writes the config so that losing power during it leaves the previous
+// config intact rather than a truncated one.
 //
-// Write to a temp file in the same directory, fsync, then rename. A power cut
-// mid-save leaves the previous config intact rather than a truncated one —
-// which matters more here than usual, because the config lives on the FAT
-// partition of a device people unplug.
+// Validate first: a config that cannot be loaded is worse than an old one,
+// because the mirror reads this file on every boot with nobody in the room.
+// See package durable for what "atomically" has to mean on a FAT card.
 func Save(path string, c Config) error {
 	if _, err := c.Validate(); err != nil {
 		return fmt.Errorf("refusing to save invalid config: %w", err)
@@ -418,43 +418,5 @@ func Save(path string, c Config) error {
 	}
 	data = append(data, '\n')
 
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".config-*.json")
-	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write temp config: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync temp config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("install config: %w", err)
-	}
-
-	// Syncing the file is not enough: the rename is a change to the *directory*,
-	// and it is still only in cache when Rename returns. Pulling power there
-	// loses the entry binding the name to the clusters the fsync above just
-	// made durable — leaving a zero-length config.json with its contents
-	// stranded in orphaned clusters, which is the exact truncation this
-	// function exists to prevent. That is not theoretical: it happened, and
-	// took a mirror down into a boot loop that only fsck could explain.
-	dirf, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open config dir: %w", err)
-	}
-	defer dirf.Close()
-	if err := dirf.Sync(); err != nil {
-		return fmt.Errorf("sync config dir: %w", err)
-	}
-	return nil
+	return durable.WriteFile(path, data, 0o644)
 }

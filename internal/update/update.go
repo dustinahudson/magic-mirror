@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dustinahudson/magic-mirror/internal/durable"
 )
 
 // Tier is which artifact an update replaces.
@@ -481,11 +483,10 @@ func copyFile(src, dst string) error {
 }
 
 // syncDir flushes a directory entry so a rename survives power loss.
+//
+// Best effort on purpose: by the time this is called the new binary is already
+// renamed into place, and failing the update over an unsyncable directory
+// would be worse than the small chance of losing the entry.
 func syncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	defer d.Close()
-	_ = d.Sync()
+	_ = durable.SyncDir(dir)
 }

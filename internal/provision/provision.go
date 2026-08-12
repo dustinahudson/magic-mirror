@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dustinahudson/magic-mirror/internal/durable"
 )
 
 // Defaults for the setup network.
@@ -271,28 +273,13 @@ func (p *Portal) SaveCredentials(ctx context.Context, ssid, psk, country string)
 	}
 	b.WriteString("}\n")
 
-	dir := filepath.Dir(p.WPAConfPath)
-	tmp, err := os.CreateTemp(dir, ".wpa-*")
-	if err != nil {
-		return fmt.Errorf("create temp supplicant config: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-
-	if _, err := tmp.WriteString(b.String()); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write supplicant config: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync supplicant config: %w", err)
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return fmt.Errorf("chmod supplicant config: %w", err)
-	}
-	if err := os.Rename(tmpName, p.WPAConfPath); err != nil {
+	// Losing this file is the worst outcome on the whole card. The mirror
+	// cannot ask anyone for the password again — it is hanging on a wall in
+	// somebody else's house — so it falls back to broadcasting an open
+	// MagicMirror-Setup access point there instead. Write it the way the
+	// config is written, for the same reason: the power will be pulled
+	// mid-write eventually, because that is the only way this device stops.
+	if err := durable.WriteFile(p.WPAConfPath, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("install supplicant config: %w", err)
 	}
 

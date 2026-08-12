@@ -100,7 +100,16 @@ case "$1" in
       done
       if ntpd -q -n -p pool.ntp.org >/dev/null 2>&1; then
         say "clock synced: $(date -u '+%Y-%m-%d %H:%M:%S') UTC"
-        date -u +%Y%m%d%H%M.%S > /boot/clock 2>/dev/null || true
+        # Write, rename, then sync. A bare redirect truncates the file first,
+        # so losing power during it leaves a zero-length clock and the next
+        # boot starts at the epoch with every HTTPS certificate "not yet
+        # valid" until NTP comes back. That is exactly what this file exists
+        # to prevent, and it has already happened once on a real card.
+        if date -u +%Y%m%d%H%M.%S > /boot/.clock.tmp 2>/dev/null; then
+          mv /boot/.clock.tmp /boot/clock 2>/dev/null && sync
+        else
+          rm -f /boot/.clock.tmp 2>/dev/null
+        fi
       else
         say "NTP sync failed; running on the restored clock"
       fi
