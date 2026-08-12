@@ -440,5 +440,21 @@ func Save(path string, c Config) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("install config: %w", err)
 	}
+
+	// Syncing the file is not enough: the rename is a change to the *directory*,
+	// and it is still only in cache when Rename returns. Pulling power there
+	// loses the entry binding the name to the clusters the fsync above just
+	// made durable — leaving a zero-length config.json with its contents
+	// stranded in orphaned clusters, which is the exact truncation this
+	// function exists to prevent. That is not theoretical: it happened, and
+	// took a mirror down into a boot loop that only fsck could explain.
+	dirf, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("open config dir: %w", err)
+	}
+	defer dirf.Close()
+	if err := dirf.Sync(); err != nil {
+		return fmt.Errorf("sync config dir: %w", err)
+	}
 	return nil
 }
