@@ -248,6 +248,23 @@
           </span>
         </div>
       </div>
+      <div class="row">
+        <div class="field">
+          <label for="update-allow-os">System updates</label>
+          <select id="update-allow-os">
+            <option value="off">Off — only update the app</option>
+            <option value="on">On — also update the system</option>
+          </select>
+          <span class="help">
+            Most updates only replace the app and take effect in a second.
+            A <b>system update</b> replaces the part of the mirror that boots,
+            so it does nothing until the mirror is next unplugged and plugged
+            back in. Worth turning on for a mirror you cannot easily get a card
+            reader to, because some fixes can arrive no other way. The previous
+            system is kept, so a bad one can be put back.
+          </span>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -432,6 +449,7 @@ function renderAll() {
   config.update = config.update || {};
   $('update-enabled').value = config.update.enabled === false ? 'off' : 'on';
   $('update-channel').value = isTestChannel(config.update.channel) ? 'test' : 'stable';
+  $('update-allow-os').value = config.update.allowOS ? 'on' : 'off';
   $('hostpreview').textContent = (config.hostname || 'magicmirror') + '.local';
   renderTimezones();
   $('new-widget-type').replaceChildren(
@@ -839,6 +857,11 @@ $('update-enabled').onchange = e => {
 $('update-channel').onchange = e => {
   config.update = config.update || {};
   config.update.channel = e.target.value;
+  touch();
+};
+$('update-allow-os').onchange = e => {
+  config.update = config.update || {};
+  config.update.allowOS = e.target.value === 'on';
   touch();
 };
 $('timezone').onchange = e => { config.timezone = e.target.value; touch(); };

@@ -105,6 +105,16 @@ type Update struct {
 	Repo    string `json:"repo"`
 	// Channel is "stable" or "prerelease".
 	Channel string `json:"channel"`
+
+	// AllowOS lets the mirror install the kernel and its initramfs, not just
+	// the application binary.
+	//
+	// Off unless asked for, because an OS update only takes effect on the next
+	// boot and this device has no safe shutdown — the new kernel sits on the
+	// card until somebody pulls the plug. Worth turning on for a mirror nobody
+	// can reach with a card reader, since it is the only route an init script
+	// or driver fix has to get there at all.
+	AllowOS bool `json:"allowOS"`
 }
 
 // Web controls the config server.

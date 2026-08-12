@@ -210,6 +210,51 @@ func TestOSTierKeepsPreviousKernel(t *testing.T) {
 	}
 }
 
+// AllowOS is the switch, and the app tier must not depend on it. A mirror
+// that has not asked for system updates still takes application ones — the
+// release carries both assets either way.
+func TestOSTierSkippedUnlessAllowed(t *testing.T) {
+	dir := t.TempDir()
+	oldKernel := []byte("the running kernel")
+	os.WriteFile(filepath.Join(dir, "kernel.img"), oldKernel, 0o755)
+	os.WriteFile(filepath.Join(dir, "mm.current"), []byte("old app"), 0o755)
+
+	f := &fakeRelease{tag: "v2.0.0", app: []byte("new app"), kernel: []byte("new kernel")}
+	srv := f.server(t)
+	u := New(Options{
+		Repo:     "test/repo",
+		StateDir: dir,
+		Version:  "v0.0.1",
+		Channel:  "stable",
+		AllowOS:  false,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	u.client = srv.Client()
+	u.apiBase = srv.URL
+
+	if err := u.CheckAndInstall(context.Background()); err != nil {
+		t.Fatalf("CheckAndInstall: %v", err)
+	}
+
+	kernel, err := os.ReadFile(filepath.Join(dir, "kernel.img"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kernel) != string(oldKernel) {
+		t.Errorf("kernel was replaced without AllowOS: got %q", kernel)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "kernel.prev.img")); err == nil {
+		t.Error("a rollback kernel was written without AllowOS")
+	}
+
+	app, err := os.ReadFile(filepath.Join(dir, "mm.current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(app) != string(f.app) {
+		t.Errorf("app tier did not install: mm.current = %q", app)
+	}
+}
+
 // Regression test for a hazard seen on real hardware.
 //
 // A device running "v0.14.0-21-gd1c3a8f-dirty" saw the newest published

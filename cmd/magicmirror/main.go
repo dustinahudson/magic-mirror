@@ -288,6 +288,7 @@ func run() error {
 			StateDir: *stateDir,
 			Version:  version,
 			Channel:  cfg.Update.Channel,
+			AllowOS:  cfg.Update.AllowOS,
 		}, log)
 		up.RequestRestart = func(reason string) {
 			log.Info("restarting to run the new build", "reason", reason)

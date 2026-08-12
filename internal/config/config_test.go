@@ -103,3 +103,36 @@ func TestParseEmptyInputIsAnError(t *testing.T) {
 		t.Fatal("empty config parsed as valid")
 	}
 }
+
+// System updates are opt-in, and staying opt-in across a save is the point:
+// a mirror that never asked to replace its kernel must not acquire the
+// setting by round-tripping through the config UI.
+func TestAllowOSDefaultsOffAndRoundTrips(t *testing.T) {
+	if Default().Update.AllowOS {
+		t.Error("AllowOS defaults on; it should take saying so")
+	}
+
+	// A config written before the setting existed must read as off, not as
+	// whatever a missing field might otherwise imply.
+	old := `{"update": {"enabled": true, "repo": "o/r", "channel": "stable"}}`
+	c, _, err := Parse([]byte(old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Update.AllowOS {
+		t.Error("a config predating the setting came back with it on")
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	c.Update.AllowOS = true
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Update.AllowOS {
+		t.Error("AllowOS did not survive a save and load")
+	}
+}
