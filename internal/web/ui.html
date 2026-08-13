@@ -884,8 +884,14 @@ $('save').onclick = async () => {
     }
     dirty = false;
     $('dirty').style.display = 'none';
+    /* Say what actually happened. "The mirror has updated" was printed
+       whatever the change was, so a setting that needs a restart looked
+       exactly like one that had already taken — nothing visibly changed, and
+       the only thing left to try was pressing save again. */
     if (body.warnings && body.warnings.length) {
       toast('Saved. Worth checking:\n• ' + body.warnings.join('\n• '), 'warn');
+    } else if (body.note) {
+      toast('Saved. ' + body.note, 'warn');
     } else {
       toast('Saved — the mirror has updated.');
     }

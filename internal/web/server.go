@@ -247,14 +247,49 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Say which settings the running mirror will not pick up until it
+	// restarts, before staging the change that makes the comparison stale.
+	//
+	// Worth the trouble because of how this fails otherwise. The page said
+	// "the mirror has updated" whatever happened, so a setting that needed a
+	// restart looked identical to one that did not: nothing changed, no
+	// explanation, and the only thing left to try was pressing save again.
+	// The logs from one afternoon show that being tried nine times.
+	deferred := restartRequired(s.applier.Current(), cfg)
+
 	s.applier.Stage(cfg)
 	s.log.Info("configuration updated via web UI",
 		"widgets", len(cfg.Widgets), "calendars", len(cfg.Calendars))
+	if deferred != "" {
+		s.log.Info("some settings need a restart to take effect", "settings", deferred)
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"ok":       true,
 		"warnings": warnings,
-	})
+	}
+	if deferred != "" {
+		out["note"] = deferred + " take effect when the mirror restarts."
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// restartRequired names the settings that the running process reads once at
+// startup, so a change to them is saved but not live.
+//
+// These are the two the mirror still builds from a copy taken at boot: the
+// updater's options and the web listener. Everything else — widgets, layout,
+// calendars, the weather location, the timezone, the hostname — is rebuilt
+// when the render loop takes a staged config.
+func restartRequired(running, next config.Config) string {
+	var parts []string
+	if running.Update != next.Update {
+		parts = append(parts, "Software update settings")
+	}
+	if running.Web.Listen != next.Web.Listen || running.Web.Enabled != next.Web.Enabled {
+		parts = append(parts, "The settings page address")
+	}
+	return strings.Join(parts, " and ")
 }
 
 // fromThisPage reports whether a request could have come from the settings

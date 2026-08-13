@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dustinahudson/magic-mirror/internal/config"
 	"github.com/dustinahudson/magic-mirror/internal/store"
 )
 
@@ -209,3 +211,101 @@ func TestStatusWithNoSourcesIsStillValidJSON(t *testing.T) {
 type errFetch string
 
 func (e errFetch) Error() string { return string(e) }
+
+// Some settings are read once at startup, so saving them changes the file and
+// not the running mirror. The page used to print "the mirror has updated"
+// whatever the change was, which made a setting that needed a restart look
+// identical to one that had already taken: nothing visibly happened, and the
+// only thing left to try was pressing save again.
+//
+// The logs from one afternoon show that being tried nine times, and a mirror
+// sat on the wrong update channel for thirteen days because of it.
+func TestSaveSaysWhichSettingsNeedARestart(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*config.Config)
+		want   string
+	}{
+		{
+			"update channel",
+			func(c *config.Config) { c.Update.Channel = "test" },
+			"Software update settings",
+		},
+		{
+			"system updates toggle",
+			func(c *config.Config) { c.Update.AllowOS = true },
+			"Software update settings",
+		},
+		{
+			"listen address",
+			func(c *config.Config) { c.Web.Listen = ":8080" },
+			"The settings page address",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			s := testServer(t, filepath.Join(dir, "config.json"))
+
+			cfg := s.applier.Current()
+			tc.change(&cfg)
+			body, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			r := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			s.handlePutConfig(w, r)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+			}
+			var got struct {
+				OK   bool   `json:"ok"`
+				Note string `json:"note"`
+			}
+			if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(got.Note, tc.want) {
+				t.Errorf("note = %q, want it to mention %q", got.Note, tc.want)
+			}
+			if !strings.Contains(got.Note, "restart") {
+				t.Errorf("note = %q, want it to say a restart is needed", got.Note)
+			}
+		})
+	}
+}
+
+// And a change that does apply live must not be labelled as needing one, or
+// the warning becomes noise and stops being read.
+func TestSaveIsSilentForSettingsThatApplyLive(t *testing.T) {
+	dir := t.TempDir()
+	s := testServer(t, filepath.Join(dir, "config.json"))
+
+	cfg := s.applier.Current()
+	cfg.Timezone = "America/Chicago"
+	cfg.Calendars = append(cfg.Calendars, config.Feed{
+		ID: "new", URL: "https://example.invalid/a.ics", Name: "New",
+	})
+	body, _ := json.Marshal(cfg)
+
+	r := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.handlePutConfig(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Note string `json:"note"`
+	}
+	json.NewDecoder(w.Body).Decode(&got)
+	if got.Note != "" {
+		t.Errorf("note = %q for a change that applies live", got.Note)
+	}
+}
