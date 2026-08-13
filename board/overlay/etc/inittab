@@ -31,8 +31,22 @@
 ::respawn:/sbin/mm-supervise
 
 # A console on the UART, for when something has gone wrong enough that the
-# screen is not telling you. Costs nothing when nothing is attached.
-console::respawn:/sbin/getty -L console 0 vt100
+# screen is not telling you.
+#
+# Named as ttyS0 rather than the generic "console", because on a Pi Zero W
+# they are not the same thing. The PL011 that ttyAMA0 refers to belongs to
+# Bluetooth; the UART on the GPIO header is the mini-UART, ttyS0. Pointing
+# the kernel console at ttyAMA0 left /dev/console with no driver behind it,
+# so getty could not open it and exited immediately — and init, doing exactly
+# what respawn means, started another one. Once a second. Forever.
+#
+# The comment this replaces said it "costs nothing when nothing is attached".
+# What it actually cost was a fork and exec every second for the life of the
+# device, and a system log that was 88% this message — the same log the
+# settings page now offers as the place to look when something is wrong.
+# BusyBox syslogd rotates at a couple of hundred kilobytes, so the real
+# diagnostics were being pushed out of it within hours.
+ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
 
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/etc/init.d/rcK
