@@ -66,6 +66,10 @@ type Manager struct {
 	mu       sync.Mutex
 	fetchers []Fetcher
 
+	// reload is closed by Reconfigure to retire the running generation of
+	// fetchers. Run replaces it before starting the next one.
+	reload chan struct{}
+
 	// ready gates the first attempt of networked fetchers; grace bounds how
 	// long that wait is allowed to last. Nil ready means fetch immediately.
 	ready <-chan struct{}
@@ -157,22 +161,70 @@ func (m *Manager) awaitNetwork(ctx context.Context, log *slog.Logger) bool {
 	}
 }
 
-// Run drives every fetcher until ctx is cancelled, returning when they have
-// all stopped.
-func (m *Manager) Run(ctx context.Context) {
+// Reconfigure replaces the running set of fetchers.
+//
+// Adding a calendar in the web UI used to place a widget and nothing else.
+// The fetcher set was built once at startup and never revisited, so the new
+// feed had nothing fetching it: the widget rendered, stayed empty, and the
+// only way to make it work was a restart nobody knew to perform. Somebody
+// with a mirror on their wall instead power-cycled it repeatedly, which on
+// this hardware is how configurations get lost.
+//
+// Safe to call at any time. In-flight attempts are cancelled, their
+// goroutines are waited for, and the new set starts clean — data already
+// published stays in the store, so the screen keeps its readings across the
+// swap rather than blanking while the first fetches complete.
+func (m *Manager) Reconfigure(fetchers []Fetcher) {
 	m.mu.Lock()
-	fetchers := append([]Fetcher(nil), m.fetchers...)
+	m.fetchers = append([]Fetcher(nil), fetchers...)
+	for _, f := range fetchers {
+		if f.Interval() > 0 {
+			m.store.SetTTL(f.Key(), 3*f.Interval())
+		}
+	}
+	old := m.reload
+	m.reload = make(chan struct{})
 	m.mu.Unlock()
 
-	var wg sync.WaitGroup
-	for _, f := range fetchers {
-		wg.Add(1)
-		go func(f Fetcher) {
-			defer wg.Done()
-			m.runOne(ctx, f)
-		}(f)
+	if old != nil {
+		close(old)
 	}
-	wg.Wait()
+}
+
+// Run drives every fetcher until ctx is cancelled, restarting the set
+// whenever Reconfigure swaps it, and returning when they have all stopped.
+func (m *Manager) Run(ctx context.Context) {
+	for {
+		m.mu.Lock()
+		fetchers := append([]Fetcher(nil), m.fetchers...)
+		if m.reload == nil {
+			m.reload = make(chan struct{})
+		}
+		reload := m.reload
+		m.mu.Unlock()
+
+		genCtx, cancel := context.WithCancel(ctx)
+		var wg sync.WaitGroup
+		for _, f := range fetchers {
+			wg.Add(1)
+			go func(f Fetcher) {
+				defer wg.Done()
+				m.runOne(genCtx, f)
+			}(f)
+		}
+
+		select {
+		case <-ctx.Done():
+			cancel()
+			wg.Wait()
+			return
+		case <-reload:
+			// Stop this generation before starting the next, so two fetchers
+			// for the same key can never publish out of order.
+			cancel()
+			wg.Wait()
+		}
+	}
 }
 
 // runOne is a single fetcher's lifetime: fetch, publish, wait, repeat.

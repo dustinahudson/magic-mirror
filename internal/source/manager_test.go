@@ -148,6 +148,91 @@ func TestNoGateFetchesImmediately(t *testing.T) {
 	}
 }
 
+// Adding a calendar in the web UI has to start fetching it. This is the bug
+// that sent a mirror home in a car: the widget appeared, nothing filled it,
+// and the only cure was a restart nobody knew to perform.
+func TestReconfigureStartsNewlyAddedSources(t *testing.T) {
+	m := NewManager(store.New(), quiet())
+	first := newProbe(KeyWeather, false)
+	m.Add(first)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+
+	if !waitFetch(t, first) {
+		t.Fatal("the original source never fetched")
+	}
+
+	added := newProbe(KeyCalendar, false)
+	m.Reconfigure([]Fetcher{first, added})
+
+	if !waitFetch(t, added) {
+		t.Fatal("a source added by Reconfigure never fetched")
+	}
+}
+
+// Removing a calendar has to stop fetching it, or a deleted feed keeps
+// hitting somebody's server forever.
+func TestReconfigureStopsRemovedSources(t *testing.T) {
+	m := NewManager(store.New(), quiet())
+	// A short interval so a still-running fetcher would fetch again quickly.
+	keep := newProbe(KeyWeather, false)
+	drop := &fastProbe{probe: newProbe(KeyCalendar, false)}
+	m.Add(keep)
+	m.Add(drop)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+
+	if !waitFetch(t, drop.probe) {
+		t.Fatal("the source never fetched to begin with")
+	}
+
+	m.Reconfigure([]Fetcher{keep})
+
+	// Drain anything already in flight, then require silence.
+	select {
+	case <-drop.probe.fetched:
+	case <-time.After(200 * time.Millisecond):
+	}
+	if !didNotFetch(t, drop.probe) {
+		t.Error("a removed source kept fetching after Reconfigure")
+	}
+}
+
+// Reconfigure must not blank the screen. Readings already published stay in
+// the store while the new set gets its first results.
+func TestReconfigureKeepsPublishedData(t *testing.T) {
+	st := store.New()
+	m := NewManager(st, quiet())
+	p := newProbe(KeyWeather, false)
+	m.Add(p)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+
+	if !waitFetch(t, p) {
+		t.Fatal("no initial fetch")
+	}
+	// Let the store record the success before swapping.
+	time.Sleep(100 * time.Millisecond)
+
+	m.Reconfigure([]Fetcher{newProbe(KeyCalendar, false)})
+
+	if _, ok := store.Get[string](st.Load(), KeyWeather).Get(); !ok {
+		t.Error("a published reading vanished across Reconfigure")
+	}
+}
+
+// fastProbe fetches on a short interval, so a fetcher that was supposed to
+// stop makes itself obvious.
+type fastProbe struct{ *probe }
+
+func (f *fastProbe) Interval() time.Duration { return 10 * time.Millisecond }
+
 // Cancelling while gated must stop the fetcher rather than leak it until the
 // grace period elapses.
 func TestCancelWhileWaitingStops(t *testing.T) {

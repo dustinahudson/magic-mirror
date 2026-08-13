@@ -305,7 +305,11 @@ func run() error {
 	}, log)
 	defer hm.Close()
 
-	err = renderLoop(ctx, log, comp, sinks, data, fonts, applier, responder, loc, hm, *tick)
+	reconfigureSources := func(c config.Config, l *time.Location) {
+		mgr.Reconfigure(buildSources(c, l))
+	}
+	err = renderLoop(ctx, log, comp, sinks, data, fonts, applier, responder,
+		reconfigureSources, loc, hm, *tick)
 
 	// Give fetchers a moment to notice cancellation, but do not wait on a
 	// slow server to exit — the process must always be able to stop.
@@ -368,6 +372,10 @@ func renderLoop(
 	fonts *render.FontSet,
 	applier *web.Applier,
 	responder *mdns.Responder,
+	// reconfigureSources swaps the fetcher set when the config changes. A
+	// function rather than the Manager itself, to keep the promise above:
+	// it takes a lock and returns, it never waits on a fetch.
+	reconfigureSources func(config.Config, *time.Location),
 	loc *time.Location,
 	hm *health.Monitor,
 	tick time.Duration,
@@ -401,7 +409,13 @@ func renderLoop(
 			// while the settings page stated the new name as fact.
 			responder.Rename(cfg.Hostname)
 
-			log.Info("applied new configuration", "widgets", len(cfg.Widgets))
+			// And so do the things being fetched. The same mistake was here
+			// for calendars and the weather location: the widget appeared,
+			// nothing filled it, and the settings page said it was applied.
+			reconfigureSources(cfg, loc)
+
+			log.Info("applied new configuration",
+				"widgets", len(cfg.Widgets), "calendars", len(cfg.Calendars))
 		}
 
 		wctx := widget.Context{
@@ -468,7 +482,19 @@ func loadConfig(path string, log *slog.Logger) (config.Config, []string, error) 
 		log.Warn("no config file; using defaults", "path", path)
 		return config.Default(), nil, nil
 	}
-	log.Error("config unusable; starting on defaults so the mirror stays reachable",
+	// Before falling back to defaults, try the last-known-good copy. Defaults
+	// mean somebody's calendars and location are gone from the screen without
+	// anyone touching a setting; the previous config means losing only what
+	// changed since the save before last.
+	if prev := config.BackupPath(path); prev != path {
+		if cfg, w, perr := config.Load(prev); perr == nil {
+			log.Error("config unusable; running the last known good one instead",
+				"path", path, "err", err, "using", prev)
+			return cfg, w, nil
+		}
+	}
+
+	log.Error("config unusable and no usable backup; starting on defaults so the mirror stays reachable",
 		"path", path, "err", err)
 	return config.Default(), warnings, nil
 }

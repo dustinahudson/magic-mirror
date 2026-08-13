@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -45,13 +47,86 @@ func TestSaveLeavesNoTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var names []string
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".config-") {
+		names = append(names, e.Name())
+		if strings.HasPrefix(e.Name(), ".") {
 			t.Errorf("temp file left behind: %s", e.Name())
 		}
 	}
-	if len(entries) != 1 {
-		t.Errorf("expected only config.json, got %d entries", len(entries))
+	// The config and its last-known-good copy, and nothing else.
+	sort.Strings(names)
+	if want := []string{"config.json", "config.prev.json"}; !slices.Equal(names, want) {
+		t.Errorf("directory holds %v, want %v", names, want)
+	}
+}
+
+// The backup is the whole point: a lost config.json must cost the last edit,
+// not every setting the mirror had.
+func TestSaveKeepsTheOutgoingConfigAsBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	first := Default()
+	first.Hostname = "first"
+	if err := Save(path, first); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing to back up on the very first save.
+	if _, err := os.Stat(BackupPath(path)); err == nil {
+		t.Error("a backup appeared before there was anything to back up")
+	}
+
+	second := Default()
+	second.Hostname = "second"
+	if err := Save(path, second); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, err := Load(BackupPath(path))
+	if err != nil {
+		t.Fatalf("backup is not loadable: %v", err)
+	}
+	if got.Hostname != "first" {
+		t.Errorf("backup hostname = %q, want the outgoing config %q", got.Hostname, "first")
+	}
+}
+
+// A config that cannot be parsed must never become the last-known-good copy,
+// or the fallback inherits the corruption it exists to survive.
+func TestSaveDoesNotBackUpAnUnusableConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	if err := Save(path, Default()); err != nil {
+		t.Fatal(err)
+	}
+	good, err := os.ReadFile(BackupPath(path))
+	if os.IsNotExist(err) {
+		// Establish a good backup by saving twice.
+		if err := Save(path, Default()); err != nil {
+			t.Fatal(err)
+		}
+		good, err = os.ReadFile(BackupPath(path))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the failure this device actually produces.
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(path, Default()); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.ReadFile(BackupPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) == 0 || string(after) != string(good) {
+		t.Error("a zero-length config was promoted into the backup")
 	}
 }
 

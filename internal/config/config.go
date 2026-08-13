@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -428,5 +429,29 @@ func Save(path string, c Config) error {
 	}
 	data = append(data, '\n')
 
+	// Keep the outgoing config as a last-known-good copy before replacing it.
+	//
+	// Writing atomically is not the same as writing durably, and on this
+	// hardware the difference showed. A card that acknowledges a flush it has
+	// not honoured loses the file anyway, and what came back was a zero-length
+	// config.json with its contents stranded in clusters only fsck could find.
+	// The mirror then boots on defaults, and somebody's calendars are gone.
+	//
+	// Two copies do not make the card honest, but they make one lost write
+	// survivable: the fallback costs whatever changed since the previous save
+	// rather than everything. Best effort on purpose — failing to write a
+	// backup must not stop the real save.
+	if prev, err := os.ReadFile(path); err == nil {
+		if _, _, perr := Parse(prev); perr == nil {
+			_ = durable.WriteFile(BackupPath(path), prev, 0o644)
+		}
+	}
+
 	return durable.WriteFile(path, data, 0o644)
+}
+
+// BackupPath names the last-known-good copy beside a config file.
+func BackupPath(path string) string {
+	ext := filepath.Ext(path)
+	return strings.TrimSuffix(path, ext) + ".prev" + ext
 }
