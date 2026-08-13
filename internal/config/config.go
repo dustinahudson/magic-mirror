@@ -207,6 +207,38 @@ func (c Config) Validate() (warnings []string, err error) {
 		errs = append(errs, "layout cols and rows must both be positive")
 	}
 
+	// Upper bounds on what the render loop is asked to do each frame.
+	//
+	// Neither is reachable through the settings page — the default grid has
+	// 192 cells and widgets are added one at a time — so these exist for a
+	// config that was hand-edited or arrived damaged. That is worth guarding
+	// because of where the cost lands: separator drawing compares every widget
+	// against every other on a full repaint, so the work grows with the square
+	// of the count, on one ARMv6 core. Long enough and a frame outlasts the
+	// thirty second watchdog, which reboots into the same config and does it
+	// again. A boot loop is the one failure this device cannot be talked out
+	// of remotely.
+	//
+	// Rejecting instead means the mirror falls back to the last good config,
+	// or to defaults, and stays reachable to be told otherwise.
+	const (
+		maxWidgets   = 256
+		maxGridSide  = 512
+		maxCalendars = 64
+	)
+	if len(c.Widgets) > maxWidgets {
+		errs = append(errs, fmt.Sprintf("%d widgets is more than the %d this display can draw",
+			len(c.Widgets), maxWidgets))
+	}
+	if c.Layout.Cols > maxGridSide || c.Layout.Rows > maxGridSide {
+		errs = append(errs, fmt.Sprintf("layout %dx%d exceeds the %d cell limit per side",
+			c.Layout.Cols, c.Layout.Rows, maxGridSide))
+	}
+	if len(c.Calendars) > maxCalendars {
+		errs = append(errs, fmt.Sprintf("%d calendars is more than the %d this mirror will fetch",
+			len(c.Calendars), maxCalendars))
+	}
+
 	seenFeed := map[string]bool{}
 	for i, f := range c.Calendars {
 		switch {

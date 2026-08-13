@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -210,4 +211,71 @@ func TestAllowOSDefaultsOffAndRoundTrips(t *testing.T) {
 	if !got.Update.AllowOS {
 		t.Error("AllowOS did not survive a save and load")
 	}
+}
+
+// Upper bounds on what a config can ask the render loop to do.
+//
+// The cost of getting this wrong lands where it cannot be undone: separator
+// drawing compares every widget with every other on a full repaint, so a
+// large enough count outlasts the thirty second watchdog, which reboots into
+// the same config and repeats. Rejecting means falling back to a config that
+// works and staying reachable.
+func TestAbsurdConfigsAreRejected(t *testing.T) {
+	widgets := func(n int) []Instance {
+		out := make([]Instance, n)
+		for i := range out {
+			out[i] = Instance{ID: fmt.Sprintf("w%d", i), Type: "datetime"}
+		}
+		return out
+	}
+	feeds := func(n int) []Feed {
+		out := make([]Feed, n)
+		for i := range out {
+			out[i] = Feed{ID: fmt.Sprintf("f%d", i), URL: "https://example.invalid/a.ics"}
+		}
+		return out
+	}
+
+	t.Run("too many widgets", func(t *testing.T) {
+		c := Default()
+		c.Widgets = widgets(1000)
+		if _, err := c.Validate(); err == nil {
+			t.Error("accepted 1000 widgets")
+		}
+	})
+
+	t.Run("an enormous grid", func(t *testing.T) {
+		c := Default()
+		c.Layout.Cols, c.Layout.Rows = 100000, 100000
+		if _, err := c.Validate(); err == nil {
+			t.Error("accepted a 100000x100000 grid")
+		}
+	})
+
+	t.Run("too many calendars", func(t *testing.T) {
+		c := Default()
+		c.Calendars = feeds(500)
+		if _, err := c.Validate(); err == nil {
+			t.Error("accepted 500 calendars")
+		}
+	})
+
+	// And the limits must be far enough above anything real to never be met
+	// by someone using the settings page as intended.
+	t.Run("a generous but realistic config is fine", func(t *testing.T) {
+		c := Default()
+		c.Widgets = widgets(64)
+		c.Calendars = feeds(12)
+		c.Layout.Cols, c.Layout.Rows = 24, 32
+		if _, err := c.Validate(); err != nil {
+			t.Errorf("rejected a realistic config: %v", err)
+		}
+	})
+
+	// The config the device falls back to must always pass its own rules.
+	t.Run("the shipped default validates", func(t *testing.T) {
+		if _, err := Default().Validate(); err != nil {
+			t.Errorf("the default config does not validate: %v", err)
+		}
+	})
 }

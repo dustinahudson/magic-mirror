@@ -106,6 +106,18 @@ func New(opts Options, applier *Applier, data *store.Store, log *slog.Logger) (*
 	s.srv = &http.Server{
 		Handler:           s.route(mux),
 		ReadHeaderTimeout: 10 * time.Second,
+
+		// Bound the rest of the exchange too, not just the headers.
+		//
+		// Every connection costs a goroutine and its buffers on a device with
+		// 512MB, and there is no endpoint here that legitimately takes a long
+		// time: the largest response is a quarter-megabyte log tail. Without
+		// these, one phone that walks out of wifi range mid-request holds its
+		// connection until the process restarts, and a handful of those is a
+		// mirror that stops answering the only page that can fix it.
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  90 * time.Second,
 	}
 	go func() { _ = s.srv.Serve(ln) }()
 	return s, nil
@@ -147,9 +159,22 @@ func (s *Server) Close() error {
 // page from a version the mirror is no longer running. Served with no
 // validator at all, that copy is kept on heuristics and someone ends up
 // driving an old settings page against a new API, with no way to tell.
-var uiETag = sync.OnceValue(func() string {
+// uiBody is the settings page, read out of the binary once.
+//
+// It never changes for the life of the process, and re-reading 30KB out of
+// the embedded filesystem on every request is work a single ARMv6 core does
+// not need to repeat — least of all while it is also compositing frames.
+var uiBody = sync.OnceValue(func() []byte {
 	body, err := uiFS.ReadFile("ui.html")
 	if err != nil {
+		return nil
+	}
+	return body
+})
+
+var uiETag = sync.OnceValue(func() string {
+	body := uiBody()
+	if body == nil {
 		return ""
 	}
 	sum := sha256.Sum256(body)
@@ -161,8 +186,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body, err := uiFS.ReadFile("ui.html")
-	if err != nil {
+	body := uiBody()
+	if body == nil {
 		http.Error(w, "ui missing", http.StatusInternalServerError)
 		return
 	}
