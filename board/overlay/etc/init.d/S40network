@@ -8,11 +8,17 @@
 # driver, and only then reboot. v1 went straight to reboot, and when that did
 # not take, the only remaining tool was the power cable.
 
-BOOT=/boot
+# Overridable so this can be tested without a radio; the defaults are the
+# production values and nothing on the device sets them. This script decides
+# whether the mirror is reachable at all, which makes "tested by deploying
+# it" the most expensive possible way to find a bug in it.
+BOOT="${MM_BOOT:-/boot}"
 WPA_CONF="$BOOT/wpa_supplicant.conf"
-RUNTIME_CONF=/var/run/wpa_supplicant.conf
-IFACE=wlan0
+RUNTIME_CONF="${MM_RUNTIME_CONF:-/var/run/wpa_supplicant.conf}"
+IFACE="${MM_IFACE:-wlan0}"
 NETLOG="$BOOT/logs/network.log"
+SYSNET="${MM_SYSNET:-/sys/class/net}"
+MODULES="${MM_MODULES:-/proc/modules}"
 
 # Log to the SD card as well as the console. The console is the UART, which
 # is only useful if someone has a serial adapter physically attached — and
@@ -40,7 +46,7 @@ case "$1" in
     # configured to autoload modules from a modalias — so on the first real
     # boot wlan0 simply never appeared and every network layer above it
     # failed with no obvious cause.
-    if ! grep -q '^brcmfmac ' /proc/modules 2>/dev/null; then
+    if ! grep -q '^brcmfmac ' "$MODULES" 2>/dev/null; then
       out=$(modprobe brcmfmac 2>&1)
       if [ $? -eq 0 ]; then
         say "loaded brcmfmac"
@@ -51,15 +57,15 @@ case "$1" in
 
     # Wait for the driver to probe the SDIO device and create the interface.
     for i in $(seq 1 50); do
-      [ -d "/sys/class/net/$IFACE" ] && break
+      [ -d "$SYSNET/$IFACE" ] && break
       usleep 100000
     done
 
-    if [ ! -d "/sys/class/net/$IFACE" ]; then
+    if [ ! -d "$SYSNET/$IFACE" ]; then
       say "$IFACE never appeared after loading brcmfmac"
-      say "modules: $(awk '{printf "%s ", $1}' /proc/modules 2>/dev/null)"
+      say "modules: $(awk '{printf "%s ", $1}' "$MODULES" 2>/dev/null)"
       say "firmware: $(ls /lib/firmware/brcm/ 2>/dev/null | tr '\n' ' ')"
-      say "net devices: $(ls /sys/class/net/ 2>/dev/null | tr '\n' ' ')"
+      say "net devices: $(ls "$SYSNET"/ 2>/dev/null | tr '\n' ' ')"
       say "dmesg brcm: $(dmesg 2>/dev/null | grep -i brcm | tail -5 | tr '\n' '|')"
       exit 0
     fi
@@ -105,10 +111,10 @@ case "$1" in
         # boot starts at the epoch with every HTTPS certificate "not yet
         # valid" until NTP comes back. That is exactly what this file exists
         # to prevent, and it has already happened once on a real card.
-        if date -u +%Y%m%d%H%M.%S > /boot/.clock.tmp 2>/dev/null; then
-          mv /boot/.clock.tmp /boot/clock 2>/dev/null && sync
+        if date -u +%Y%m%d%H%M.%S > "$BOOT/.clock.tmp" 2>/dev/null; then
+          mv "$BOOT/.clock.tmp" "$BOOT/clock" 2>/dev/null && sync
         else
-          rm -f /boot/.clock.tmp 2>/dev/null
+          rm -f "$BOOT/.clock.tmp" 2>/dev/null
         fi
       else
         say "NTP sync failed; running on the restored clock"

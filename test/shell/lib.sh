@@ -118,3 +118,11 @@ supervise() {
   MM_NO_BINARY_PAUSE=0 \
     sh "$REPO_ROOT/board/overlay/sbin/mm-supervise" 2>&1
 }
+
+assert_file_exists_dir() {
+  if [ -d "$1" ]; then
+    pass
+  else
+    fail "expected directory to exist: $1"
+  fi
+}

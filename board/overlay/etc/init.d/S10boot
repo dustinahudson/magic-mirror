@@ -7,8 +7,13 @@
 # itself is a cpio in RAM, so nothing there survives a reboot and nothing
 # there can be corrupted by one.
 
-BOOT_DEV=/dev/mmcblk0p1
-BOOT_MNT=/boot
+# Overridable so the mount and repair sequence can be tested without a card;
+# the defaults are the production values and nothing on the device sets them.
+# This is the first script that runs, and if it is wrong nothing after it
+# happens at all.
+BOOT_DEV="${MM_BOOT_DEV:-/dev/mmcblk0p1}"
+BOOT_MNT="${MM_BOOT:-/boot}"
+DEV_WAIT="${MM_DEV_WAIT:-50}"
 
 case "$1" in
   start)
@@ -18,7 +23,7 @@ case "$1" in
 
     # Wait for the SD controller to enumerate. Without this the mount races
     # the mmc driver on a cold boot and loses about one time in five.
-    for i in $(seq 1 50); do
+    for i in $(seq 1 "$DEV_WAIT"); do
       [ -b "$BOOT_DEV" ] && break
       usleep 100000
     done
