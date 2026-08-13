@@ -77,9 +77,22 @@ type Result struct {
 	Skipped int
 }
 
-// occurrenceCap bounds a single series, so one pathological rule cannot
-// exhaust memory even inside a wide window.
+// occurrenceCap bounds what a single series contributes, so one pathological
+// rule cannot exhaust memory even inside a wide window.
 const occurrenceCap = 2000
+
+// occurrenceScanCap bounds how far a series is walked looking for occurrences
+// inside the window.
+//
+// The two are different limits. A rule can start years before the window and
+// still be legitimate — a birthday recurring since the 1970s — so reaching the
+// window means stepping through everything before it. Without this, a
+// second-by-second rule with an old DTSTART burns a core walking to the
+// present, on a device that has exactly one.
+//
+// Generous next to anything real: a daily event started at the millennium
+// needs around nine thousand steps.
+const occurrenceScanCap = 200_000
 
 // maxFeed bounds how much of a feed is read. A misconfigured URL pointing at
 // something enormous should fail cleanly rather than exhaust a 512MB device.
@@ -249,13 +262,40 @@ func expand(ev *goics.VEvent, opts Options, overrides map[overrideKey]*override,
 	}
 
 	dur := base.Duration()
-	starts := set.Between(from.Add(-dur), to, true)
+	lower := from.Add(-dur)
 
-	out := make([]Event, 0, len(starts))
-	for i, s := range starts {
-		if i >= occurrenceCap {
+	// Walk the series rather than materialising it.
+	//
+	// set.Between builds the entire slice before returning, and a recurrence
+	// rule is allowed to be pathological: FREQ=SECONDLY is valid RFC 5545, and
+	// across the ninety day window this device uses that is nearly eight
+	// million occurrences — around 190MB of time.Time, followed by a result
+	// slice preallocated to match, on a machine with 512MB and no swap. The
+	// occurrence cap was applied after both allocations, so it bounded the
+	// output and nothing else.
+	//
+	// The device is killed by the kernel long before it renders anything, and
+	// the restart that follows counts as a failure, so three of them roll the
+	// mirror back to a build with the same feed still configured. Nothing
+	// about that is recoverable from the house it is hanging in.
+	//
+	// So the caps apply while walking: one on what is produced, and one on how
+	// far the walk goes, because a rule starting years before the window still
+	// has to be stepped through to reach it.
+	out := make([]Event, 0, 64)
+	next := set.Iterator()
+	for scanned := 0; scanned < occurrenceScanCap; scanned++ {
+		s, ok := next()
+		if !ok || s.After(to) {
 			break
 		}
+		if s.Before(lower) {
+			continue
+		}
+		if len(out) >= occurrenceCap {
+			break
+		}
+
 		key := overrideKey{uid: base.UID, when: s.Unix()}
 		// A moved or cancelled occurrence is not drawn here: the override
 		// contributes its own time, or nothing at all.
