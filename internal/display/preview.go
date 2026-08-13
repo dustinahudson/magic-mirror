@@ -34,9 +34,28 @@ type Preview struct {
 	stamp   time.Time // when that frame was presented
 	waiters []chan struct{}
 
+	// lastRequest is when a client last asked for anything, which is how
+	// Present decides whether encoding is worth doing at all.
+	lastRequest time.Time
+
 	// Stats, purely informational, shown in the preview page header.
 	presented uint64
 	lastDirty int
+}
+
+// previewIdleAfter is how long after the last request the preview stops
+// encoding frames nobody is watching.
+//
+// Encoding happens on the render goroutine, so it is time the compositor is
+// not drawing. Generous enough that a client polling at any sane rate never
+// sees a gap.
+const previewIdleAfter = 10 * time.Second
+
+// touch records client activity, so Present knows somebody is watching.
+func (p *Preview) touch() {
+	p.mu.Lock()
+	p.lastRequest = time.Now()
+	p.mu.Unlock()
 }
 
 // NewPreview starts an HTTP preview server on addr (e.g. ":8080").
@@ -68,6 +87,23 @@ func (p *Preview) Present(frame *image.RGBA, dirty []image.Rectangle) error {
 	// Encoding happens on the caller's goroutine, which is the render loop —
 	// so keep it off the critical path when nobody is watching. If no client
 	// has asked for a frame recently, skip the encode entirely.
+	//
+	// This was described here and never implemented: every frame was encoded
+	// whether or not anything was going to look at it. A PNG of 1920x1080 is
+	// not free, and it was being paid on the goroutine whose deadline is the
+	// one that matters.
+	p.mu.Lock()
+	idle := p.lastRequest.IsZero() || time.Since(p.lastRequest) > previewIdleAfter
+	waiting := len(p.waiters) > 0
+	if idle && !waiting {
+		// Still count the frame; just do not render a picture of it.
+		p.presented++
+		p.lastDirty = len(dirty)
+		p.mu.Unlock()
+		return nil
+	}
+	p.mu.Unlock()
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, frame); err != nil {
 		return fmt.Errorf("preview encode: %w", err)
@@ -96,6 +132,7 @@ func (p *Preview) Close() error {
 }
 
 func (p *Preview) handleFrame(w http.ResponseWriter, r *http.Request) {
+	p.touch()
 	p.mu.Lock()
 	data, version := p.png, p.version
 	p.mu.Unlock()
@@ -113,6 +150,7 @@ func (p *Preview) handleFrame(w http.ResponseWriter, r *http.Request) {
 // handleWait blocks until a frame newer than ?since= is available, then
 // returns its version. Falls back to a timeout so proxies do not kill it.
 func (p *Preview) handleWait(w http.ResponseWriter, r *http.Request) {
+	p.touch()
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 
 	p.mu.Lock()
@@ -146,6 +184,7 @@ func writeWait(w http.ResponseWriter, version, presented uint64, dirty int) {
 }
 
 func (p *Preview) handleIndex(w http.ResponseWriter, r *http.Request) {
+	p.touch()
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return

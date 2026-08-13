@@ -1,6 +1,10 @@
 package markdown
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func kinds(bs []Block) []Kind {
 	out := make([]Kind, len(bs))
@@ -147,6 +151,88 @@ func TestGarbageStillRenders(t *testing.T) {
 	for _, src := range []string{"", "***", "- \n- \n", "# ", "```\nunclosed", "|a|b|\n|-|"} {
 		if got := Parse(src); got == nil && src != "" {
 			t.Errorf("Parse(%q) returned nil", src)
+		}
+	}
+}
+
+// The note text is whatever somebody typed into the settings page, and this
+// walk recurses once per level of nesting. A Go stack overflow is a fatal
+// error that recover cannot catch — so unlike a widget that panics while
+// rendering, this is not contained. And Notes parses at construction, inside
+// buildPlacements on the render goroutine, from text saved in config.json:
+// the crash would repeat on every boot, from a file the device reads before
+// anyone can tell it otherwise.
+func TestDeeplyNestedListsDoNotRecurseForever(t *testing.T) {
+	// A megabyte of genuinely nested list, which is deep enough to recurse
+	// past any stack that matters while staying a plausible paste.
+	var b strings.Builder
+	for i := range 1000 {
+		b.WriteString(strings.Repeat("  ", i))
+		b.WriteString("- deep\n")
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		done <- len(Parse(b.String()))
+	}()
+
+	select {
+	case n := <-done:
+		if n > maxBlocks {
+			t.Errorf("produced %d blocks, want at most %d", n, maxBlocks)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("still parsing after 30s")
+	}
+
+	// And the walk must have stopped descending, not merely survived.
+	for _, blk := range Parse(b.String()) {
+		if blk.Level > maxDepth {
+			t.Errorf("emitted a block at depth %d, past the %d limit", blk.Level, maxDepth)
+			break
+		}
+	}
+}
+
+// A note that is simply enormous must not turn into an unbounded block list
+// that is then measured and drawn on every repaint.
+func TestEnormousNoteIsCapped(t *testing.T) {
+	var b strings.Builder
+	for range 50000 {
+		b.WriteString("a paragraph\n\n")
+	}
+	if n := len(Parse(b.String())); n > maxBlocks {
+		t.Errorf("produced %d blocks, want at most %d", n, maxBlocks)
+	}
+}
+
+// And ordinary notes must be completely unaffected, including nesting at the
+// depth a person actually uses.
+func TestOrdinaryNotesAreUnaffected(t *testing.T) {
+	src := strings.Join([]string{
+		"# This week",
+		"",
+		"- [x] Bins out Tuesday",
+		"- [ ] Call the plumber",
+		"  - ask about the boiler",
+		"    - and the radiator",
+		"",
+		"> Remember the school run",
+	}, "\n")
+
+	blocks := Parse(src)
+	if len(blocks) < 6 {
+		t.Errorf("got %d blocks from an ordinary note, want at least 6", len(blocks))
+	}
+
+	var text string
+	for _, b := range blocks {
+		text += b.Text() + "|"
+	}
+	for _, want := range []string{"This week", "Bins out Tuesday", "Call the plumber",
+		"ask about the boiler", "and the radiator", "Remember the school run"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("ordinary note lost %q: %s", want, text)
 		}
 	}
 }

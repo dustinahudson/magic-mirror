@@ -85,12 +85,40 @@ func Parse(src string) []Block {
 	return out
 }
 
+// Limits on what a note can be.
+//
+// The text is whatever somebody typed into the settings page, and this walk
+// recurses once per level of nesting. Deeply nested lists therefore recurse
+// as deeply as the document says to — and a Go stack overflow is a fatal
+// error that recover cannot catch, so it is not contained by the panic
+// handling that protects widget rendering.
+//
+// Where that lands is the whole problem: Notes parses at construction, which
+// happens inside buildPlacements on the render goroutine, and the text is
+// saved to config.json. So the crash repeats on every boot, from a file the
+// device reads before it can be told otherwise — a mirror that has to come
+// off a wall.
+//
+// Both limits sit far beyond anything readable on a tile. Sixteen levels of
+// nesting is already illegible at any font size a mirror uses, and a note
+// with two thousand blocks was never going to be read from across a room.
+const (
+	maxDepth  = 16
+	maxBlocks = 2000
+)
+
 // walk flattens the tree.
 //
 // listCounter is threaded through so ordered lists number correctly even
 // when nested, which the tree structure alone does not give us.
 func walk(n ast.Node, src []byte, out *[]Block, depth int, counter *int) {
+	if depth > maxDepth {
+		return
+	}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if len(*out) >= maxBlocks {
+			return
+		}
 		switch node := c.(type) {
 
 		case *ast.Heading:
@@ -156,6 +184,9 @@ func walk(n ast.Node, src []byte, out *[]Block, depth int, counter *int) {
 
 // emitItem turns one list item into a block, detecting task checkboxes.
 func emitItem(item ast.Node, src []byte, out *[]Block, depth int, marker string) {
+	if depth > maxDepth || len(*out) >= maxBlocks {
+		return
+	}
 	block := Block{Kind: ListItem, Level: depth, Marker: marker}
 
 	// A task list item carries a checkbox as the first child of its text
