@@ -100,6 +100,30 @@ func run() error {
 		log.Warn("timezone", "err", err, "using", loc.String())
 	}
 
+	opts := cliOptions{
+		ConfigPath: *configPath,
+		FBPath:     *fbPath,
+		Preview:    *previewOn,
+		PNGDir:     *pngDir,
+		Size:       *size,
+		StateDir:   *stateDir,
+		WiFiIface:  *wifiIface,
+		WPAConf:    *wpaConf,
+		Watchdog:   *watchdog,
+		Tick:       *tick,
+	}
+	// Decide everything that can be decided before touching hardware. See
+	// wiring.go for why these answers are worth having in one place.
+	p, err := planFrom(opts, cfg)
+	if err != nil {
+		return err
+	}
+	if reason := p.UpdateSkippedReason(cfg, opts); reason != "" {
+		// Said out loud, because the alternative is wondering months later
+		// why a published fix never reached the device.
+		log.Warn("self-update will not run", "reason", reason)
+	}
+
 	// Assemble the display stack. Multiple backends can run at once, so a
 	// device can drive its panel and serve a preview simultaneously.
 	bounds, err := parseSize(*size)
@@ -136,8 +160,10 @@ func run() error {
 		log.Info("writing frames", "dir", *pngDir)
 		sinks = append(sinks, pw)
 	}
-	if len(sinks) == 0 {
-		return fmt.Errorf("no display selected: pass -fb, -preview or -png")
+	if len(sinks) != len(p.Displays) {
+		// The plan and the assembly must not drift: a backend that was
+		// planned and not opened is a screen nobody is drawing to.
+		return fmt.Errorf("planned %d display backends, opened %d", len(p.Displays), len(sinks))
 	}
 
 	data := store.New()
@@ -166,10 +192,10 @@ func run() error {
 	netReady := make(chan struct{})
 	var netOnce sync.Once
 	markNetworkUp := func() { netOnce.Do(func() { close(netReady) }) }
-	if *wifiIface == "" {
-		markNetworkUp()
-	} else {
+	if p.GateFirstFetch {
 		mgr.WaitForNetwork(netReady, firstFetchGrace)
+	} else {
+		markNetworkUp()
 	}
 
 	fetchDone := make(chan struct{})
@@ -207,7 +233,7 @@ func run() error {
 	})
 
 	var coord *provision.Coordinator
-	if *wifiIface != "" && *wpaConf != "" {
+	if p.RunPortal {
 		portal := provision.New(*wifiIface, *wpaConf, log)
 		coord = provision.NewCoordinator(portal, log)
 		coord.OnState = func(st provision.State) {
@@ -221,7 +247,7 @@ func run() error {
 	// The wifi supervisor climbs a recovery ladder that ends at reboot
 	// rather than starting there. It publishes into the same store the
 	// widgets read, so link trouble shows on screen.
-	if *wifiIface != "" {
+	if p.RunWiFiSupervisor {
 		sup := netmon.New(*wifiIface, log)
 		// While the setup portal owns the radio there is no route anywhere
 		// by design, so recovery must stand down rather than fight it.
@@ -254,13 +280,8 @@ func run() error {
 	// Config changes are staged here and picked up by the render loop. The
 	// web server never touches the compositor.
 	applier := web.NewApplier(cfg)
-	if cfg.Web.Enabled {
-		wopts := web.Options{
-			Listen:     cfg.Web.Listen,
-			ConfigPath: *configPath,
-			Version:    version,
-			StateDir:   *stateDir,
-		}
+	if p.Web != nil {
+		wopts := *p.Web
 		// The setup portal borrows this listener rather than opening its
 		// own on the same port, and lends the settings page the one button
 		// that can send the mirror back to it.
@@ -282,14 +303,8 @@ func run() error {
 	// Self-update. Installing exits cleanly rather than rebooting: init
 	// respawns mm.current, which is now the new binary. If it fails to
 	// reach healthy three times, mm-supervise restores mm.previous.
-	if cfg.Update.Enabled && *stateDir != "" {
-		up := update.New(update.Options{
-			Repo:     cfg.Update.Repo,
-			StateDir: *stateDir,
-			Version:  version,
-			Channel:  cfg.Update.Channel,
-			AllowOS:  cfg.Update.AllowOS,
-		}, log)
+	if p.Update != nil {
+		up := update.New(*p.Update, log)
 		up.RequestRestart = func(reason string) {
 			log.Info("restarting to run the new build", "reason", reason)
 			stop()
@@ -299,10 +314,7 @@ func run() error {
 
 	// The watchdog is petted from the render loop and nowhere else, so
 	// "frames stopped" reboots and "network stalled" does not.
-	hm := health.New(health.Options{
-		StateDir:     *stateDir,
-		WatchdogPath: *watchdog,
-	}, log)
+	hm := health.New(p.Health, log)
 	defer hm.Close()
 
 	reconfigureSources := func(c config.Config, l *time.Location) {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,8 +68,12 @@ func (p *scriptedProbe) Probe(context.Context) error {
 	return nil
 }
 
-func testSupervisor(probe Prober, runner Runner) (*Supervisor, *bool) {
-	rebooted := false
+// The reboot flag is written from the supervisor's goroutine and read from
+// the test's, so it has to be atomic. A plain bool here raced, which made
+// -race unreliable for the package that decides whether a wedged device
+// recovers on its own or waits for someone to drive over.
+func testSupervisor(probe Prober, runner Runner) (*Supervisor, *atomic.Bool) {
+	var rebooted atomic.Bool
 	s := &Supervisor{
 		Interface:       "wlan0",
 		Module:          "brcmfmac",
@@ -80,7 +85,7 @@ func testSupervisor(probe Prober, runner Runner) (*Supervisor, *bool) {
 		FailuresPerRung: 2,
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Reboot: func(context.Context) error {
-			rebooted = true
+			rebooted.Store(true)
 			return nil
 		},
 	}
@@ -108,7 +113,7 @@ func TestLadderClimbsInOrderAndRebootsLast(t *testing.T) {
 
 	// Wait for the ladder to be exhausted.
 	deadline := time.After(2 * time.Second)
-	for !*rebooted {
+	for !rebooted.Load() {
 		select {
 		case <-deadline:
 			t.Fatalf("never reached reboot; got rung %v after %d commands: %v",
@@ -152,7 +157,7 @@ func TestSingleFailureDoesNotEscalate(t *testing.T) {
 	defer cancel()
 	s.Run(ctx)
 
-	if *rebooted {
+	if rebooted.Load() {
 		t.Error("rebooted after a single probe failure")
 	}
 	if cmds := runner.commands(); len(cmds) > 0 {
@@ -181,7 +186,7 @@ func TestRecoveryResetsLadder(t *testing.T) {
 	if st.Failures != 0 {
 		t.Errorf("Failures = %d after recovery, want 0", st.Failures)
 	}
-	if *rebooted {
+	if rebooted.Load() {
 		t.Error("rebooted despite the link recovering")
 	}
 	// It should have tried the cheapest rung once, and gone no further.
@@ -213,7 +218,7 @@ func TestFailingCommandStillEscalates(t *testing.T) {
 	}()
 
 	deadline := time.After(2 * time.Second)
-	for !*rebooted {
+	for !rebooted.Load() {
 		select {
 		case <-deadline:
 			t.Fatalf("stalled at rung %v when recovery commands failed", s.Status().Rung)
@@ -266,7 +271,7 @@ func TestNeverConnectedDoesNotReboot(t *testing.T) {
 	defer cancel()
 	s.Run(ctx)
 
-	if *rebooted {
+	if rebooted.Load() {
 		t.Fatal("rebooted a device that has never had a working link")
 	}
 	// It should still have tried every cheaper recovery.
@@ -294,7 +299,7 @@ func TestPreviouslyConnectedCanReboot(t *testing.T) {
 	go func() { defer close(done); s.Run(ctx) }()
 
 	deadline := time.After(2 * time.Second)
-	for !*rebooted {
+	for !rebooted.Load() {
 		select {
 		case <-deadline:
 			t.Fatalf("a link that worked and then died never reached reboot; rung=%v", s.Status().Rung)
@@ -317,7 +322,7 @@ func TestSuspendedDoesNothing(t *testing.T) {
 	defer cancel()
 	s.Run(ctx)
 
-	if *rebooted {
+	if rebooted.Load() {
 		t.Error("rebooted while suspended")
 	}
 	if cmds := runner.commands(); len(cmds) > 0 {
