@@ -87,7 +87,12 @@ case "$1" in
     # -s  no password logins
     # -g  no password logins for root specifically
     # -E  log to stderr rather than syslog
-    ( dropbear -F -E -s -g -r "$ETCDIR/$KEY" >> "$NETLOG" 2>&1 ) &
+    # Backgrounded directly rather than inside a subshell, so $! is dropbear's
+    # own pid. It was the subshell's, and killing that leaves dropbear holding
+    # port 22 — after which a restart starts a second one that exits
+    # immediately, reporting a failure that is really the first one still
+    # running.
+    dropbear -F -E -s -g -r "$ETCDIR/$KEY" >> "$NETLOG" 2>&1 &
     echo $! > "$PIDFILE"
 
     # Give it a moment, then confirm it is actually alive rather than
@@ -101,8 +106,19 @@ case "$1" in
 
     # Cache the key for next boot. Copying it to FAT is fine; only using it
     # from there is not.
+    #
+    # Written through a temp file and renamed, because a bare copy truncates
+    # the destination first. A power cut during it — and power cuts are how
+    # this device stops — leaves a partial key on the card. The restore above
+    # only tests that the file is non-empty, so a truncated one is copied back
+    # and dropbear refuses to start, taking away the remote access that would
+    # have let anyone find out why.
     if [ -s "$ETCDIR/$KEY" ] && mkdir -p "$CACHE" 2>/dev/null; then
-      cp "$ETCDIR/$KEY" "$CACHE/$KEY" 2>/dev/null && sync
+      if cp "$ETCDIR/$KEY" "$CACHE/.$KEY.tmp" 2>/dev/null; then
+        mv "$CACHE/.$KEY.tmp" "$CACHE/$KEY" 2>/dev/null && sync
+      else
+        rm -f "$CACHE/.$KEY.tmp" 2>/dev/null
+      fi
     fi
     ;;
 

@@ -126,6 +126,41 @@ boot_start "$d" >/dev/null
 assert_file_exists_dir "$d/mnt/logs"
 rm -rf "$d"
 
+# --- log rotation ---------------------------------------------------------
+
+# Nothing rotated the network log, and dropbear appends a line per connection
+# attempt to it for as long as the device runs. On the partition that also
+# holds the configuration and the kernel, a log nobody bounds is a mirror that
+# eventually cannot save its own settings.
+it "rotates a log that has grown too large"
+d=$(boot_fixture)
+mkdir -p "$d/mnt/logs"
+dd if=/dev/zero of="$d/mnt/logs/network.log" bs=1024 count=1100 2>/dev/null
+boot_start "$d" >/dev/null
+assert_file_exists "$d/mnt/logs/network.log.1"
+rm -rf "$d"
+
+it "leaves a small log alone"
+d=$(boot_fixture)
+mkdir -p "$d/mnt/logs"
+echo "a few lines" > "$d/mnt/logs/network.log"
+boot_start "$d" >/dev/null
+assert_file_missing "$d/mnt/logs/network.log.1"
+rm -rf "$d"
+
+it "rotates every log, not just the first"
+d=$(boot_fixture)
+mkdir -p "$d/mnt/logs"
+dd if=/dev/zero of="$d/mnt/logs/network.log" bs=1024 count=1100 2>/dev/null
+dd if=/dev/zero of="$d/mnt/logs/mm.log" bs=1024 count=1100 2>/dev/null
+boot_start "$d" >/dev/null
+if [ -f "$d/mnt/logs/network.log.1" ] && [ -f "$d/mnt/logs/mm.log.1" ]; then
+  pass
+else
+  fail "not every oversized log was rotated"
+fi
+rm -rf "$d"
+
 # --- shutdown and usage ---------------------------------------------------
 
 it "unmounts on stop"

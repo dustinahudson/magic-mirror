@@ -53,6 +53,24 @@ case "$1" in
     # device people unplug rather than shut down.
 
     mkdir -p "$BOOT_MNT/logs"
+
+    # Cap the logs before anything starts appending to them.
+    #
+    # mm-supervise rotates its own log, but nothing rotated the network one —
+    # and dropbear appends a line per connection attempt to it for as long as
+    # the device runs. On a partition that also holds the configuration, the
+    # kernel and every piece of persistent state, a log nobody bounds is a
+    # mirror that eventually cannot save its own settings. One scanner on the
+    # network is enough to get there.
+    #
+    # Done here because it is the one place that runs before the writers do.
+    for log in "$BOOT_MNT"/logs/*.log; do
+      [ -f "$log" ] || continue
+      size=$(wc -c < "$log" 2>/dev/null || echo 0)
+      if [ "$size" -gt "${MM_LOG_MAX_BYTES:-1048576}" ]; then
+        mv "$log" "$log.1" 2>/dev/null && sync
+      fi
+    done
     ;;
 
   stop)
