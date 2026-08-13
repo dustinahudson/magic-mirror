@@ -207,29 +207,48 @@ func (f *Face) Measure(s string) int {
 	return font.MeasureString(f.face, s).Round()
 }
 
+// maxCachedGlyphs bounds one face's glyph cache.
+//
+// The keys are runes out of calendar titles and shared notes, which is text
+// this device did not write and cannot predict. A cache with no ceiling grows
+// with the distinct characters it has ever been shown, for as long as the
+// process runs — and this one runs for months at a time in a house nobody
+// visits, on 512MB with no swap.
+//
+// Well above any real repertoire: Latin plus punctuation and symbols is a few
+// hundred, and every European language together does not approach this. Past
+// it, glyphs are still rendered correctly, just rasterised each time — slower
+// for text nobody can read anyway, which is the right way round.
+const maxCachedGlyphs = 4096
+
 func (f *Face) glyphFor(r rune) *glyph {
 	if g, ok := f.glyphs[r]; ok {
 		return g
 	}
 
+	g := f.rasterise(r)
+	if len(f.glyphs) < maxCachedGlyphs {
+		f.glyphs[r] = g
+	}
+	return g
+}
+
+func (f *Face) rasterise(r rune) *glyph {
 	dr, mask, maskp, adv, ok := f.face.Glyph(fixed.Point26_6{}, r)
 	if !ok {
-		// Unmapped rune: cache a blank of the right advance so we neither
-		// re-attempt the lookup every frame nor collapse the layout.
+		// Unmapped rune: a blank of the right advance, so we neither collapse
+		// the layout nor pretend the character was drawn.
 		g := &glyph{advance: f.face.Kern(r, r).Round()}
 		if a, ok := f.face.GlyphAdvance(r); ok {
 			g.advance = a.Round()
 		}
-		f.glyphs[r] = g
 		return g
 	}
 
 	m := image.NewAlpha(image.Rect(0, 0, dr.Dx(), dr.Dy()))
 	draw.Draw(m, m.Bounds(), mask, maskp, draw.Src)
 
-	g := &glyph{mask: m, bounds: dr, advance: adv.Round()}
-	f.glyphs[r] = g
-	return g
+	return &glyph{mask: m, bounds: dr, advance: adv.Round()}
 }
 
 // Draw renders s with its baseline at y and its left edge at x, returning

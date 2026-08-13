@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // A recurrence rule arrives from whatever URL somebody pasted into the
@@ -142,6 +143,63 @@ func TestLongRunningDailyRuleStillReachesTheWindow(t *testing.T) {
 		if e.Start.Year() != 2026 {
 			t.Errorf("event outside the window: %v", e.Start)
 			break
+		}
+	}
+}
+
+// Titles and locations come out of a feed and are measured, drawn, and copied
+// into a change-detection key on every repaint. Nothing in ICS promises they
+// are short — a description pasted into a summary runs to kilobytes — and the
+// cost of that lands once a second on one ARMv6 core.
+func TestOversizedTitlesAreClipped(t *testing.T) {
+	huge := strings.Repeat("A", 100_000)
+	feed := strings.Join([]string{
+		"BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT",
+		"UID:wordy@example.invalid",
+		"DTSTART:20260812T120000Z",
+		"DTEND:20260812T130000Z",
+		"SUMMARY:" + huge,
+		"LOCATION:" + huge,
+		"END:VEVENT", "END:VCALENDAR", "",
+	}, "\r\n")
+
+	res, err := Parse(strings.NewReader(feed), deviceWindow(t))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Events) != 1 {
+		t.Fatalf("got %d events, want 1", len(res.Events))
+	}
+
+	e := res.Events[0]
+	if len(e.Summary) > maxTextLen+8 {
+		t.Errorf("summary is %d bytes; it was never clipped", len(e.Summary))
+	}
+	if len(e.Location) > maxTextLen+8 {
+		t.Errorf("location is %d bytes; it was never clipped", len(e.Location))
+	}
+}
+
+// Clipping must not produce a broken final character, or the renderer draws a
+// replacement glyph and the key carries invalid UTF-8.
+func TestClippingLandsOnARuneBoundary(t *testing.T) {
+	// Three-byte runes, so a naive cut at 512 bytes lands mid-character.
+	body := strings.Repeat("あ", 1000)
+	got := clip(body)
+	if !utf8.ValidString(got) {
+		t.Errorf("clipped text is not valid UTF-8: %q", got[len(got)-8:])
+	}
+	if len(got) > maxTextLen+8 {
+		t.Errorf("clipped to %d bytes, want about %d", len(got), maxTextLen)
+	}
+}
+
+// Ordinary titles must pass through untouched, including the trailing
+// character — an off-by-one here would clip every event title in the world.
+func TestOrdinaryTitlesAreUntouched(t *testing.T) {
+	for _, s := range []string{"", "Standup", "Dentist — 3pm, bring the form", "café ☕"} {
+		if got := clip(s); got != s {
+			t.Errorf("clip(%q) = %q, want it unchanged", s, got)
 		}
 	}
 }

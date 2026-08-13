@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	goics "github.com/arran4/golang-ical"
 	"github.com/teambition/rrule-go"
@@ -375,12 +376,37 @@ func single(ev *goics.VEvent, loc *time.Location) (Event, error) {
 
 	return Event{
 		UID:      uid,
-		Summary:  propValue(ev, string(goics.ComponentPropertySummary)),
-		Location: propValue(ev, string(goics.ComponentPropertyLocation)),
+		Summary:  clip(propValue(ev, string(goics.ComponentPropertySummary))),
+		Location: clip(propValue(ev, string(goics.ComponentPropertyLocation))),
 		Start:    start,
 		End:      end,
 		AllDay:   allDay,
 	}, nil
+}
+
+// maxTextLen bounds a title or location taken from a feed.
+//
+// These strings are measured and drawn on every repaint, copied into every
+// change-detection key, and held for as long as the events are. Nothing in a
+// feed promises they are short: an ICS description pasted into a summary can
+// run to kilobytes, and the cost of that lands on one ARMv6 core once a
+// second.
+//
+// Far beyond anything a tile can show — a calendar cell fits a handful of
+// words — so this only ever truncates text that was never going to be read.
+const maxTextLen = 512
+
+func clip(s string) string {
+	if len(s) <= maxTextLen {
+		return s
+	}
+	// Cut on a rune boundary so the result is still valid UTF-8 rather than a
+	// broken final character.
+	out := s[:maxTextLen]
+	for len(out) > 0 && !utf8.ValidString(out) {
+		out = out[:len(out)-1]
+	}
+	return out + "…"
 }
 
 // eventTime reads a date-time property, reporting whether it is a whole-day
