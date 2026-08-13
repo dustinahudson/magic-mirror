@@ -51,7 +51,16 @@ type Runner interface {
 type ExecRunner struct{}
 
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+
+	// CombinedOutput reads until the pipes close, and anything the child
+	// backgrounded keeps its inherited copy open — hostapd and dnsmasq are
+	// both started that way. Cancelling would then kill the child and leave
+	// Wait blocked on a grandchild, stalling the portal that exists to make
+	// this device recoverable without a card reader.
+	cmd.WaitDelay = 5 * time.Second
+
+	return cmd.CombinedOutput()
 }
 
 // Portal manages the AP lifecycle.

@@ -346,3 +346,109 @@ func (p *flakyProbe) Probe(context.Context) error {
 	}
 	return errors.New("link lost")
 }
+
+// hangingRunner blocks until its context is cancelled, modelling a command
+// talking to a radio driver that has stopped answering — which is the state
+// the ladder is running because of.
+type hangingRunner struct {
+	mu     sync.Mutex
+	calls  []string
+	block  map[string]bool
+	served chan string
+}
+
+func (h *hangingRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	h.mu.Lock()
+	h.calls = append(h.calls, name)
+	blocked := h.block[name]
+	h.mu.Unlock()
+
+	select {
+	case h.served <- name:
+	default:
+	}
+
+	if blocked {
+		<-ctx.Done() // never returns on its own
+		return nil, ctx.Err()
+	}
+	return nil, nil
+}
+
+func (h *hangingRunner) ran(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.calls {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// A recovery command that never returns must not take the ladder with it.
+//
+// Nothing else is watching this goroutine: the hardware watchdog is fed by
+// the render loop, which carries on drawing a clock above a dead network. A
+// supervisor blocked inside act stops probing, never climbs to the rung that
+// would have fixed things, and never reaches reboot — so the mirror keeps
+// showing the time and cannot be reached by anyone, forever.
+func TestHangingRecoveryCommandDoesNotStallTheLadder(t *testing.T) {
+	probe := &flakyProbe{succeedFirst: 1}
+	runner := &hangingRunner{
+		block:  map[string]bool{"wpa_cli": true},
+		served: make(chan string, 16),
+	}
+
+	s, rebooted := testSupervisor(probe, runner)
+	s.Runner = runner
+	s.CommandTimeout = 50 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Run(ctx)
+	}()
+
+	deadline := time.After(5 * time.Second)
+	for !rebooted.Load() {
+		select {
+		case <-deadline:
+			t.Fatalf("stalled at rung %v; the ladder never got past the hanging command",
+				s.Status().Rung)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+
+	// It must have climbed past the rung that hung.
+	if !runner.ran("wpa_cli") {
+		t.Error("never attempted the cheapest rung")
+	}
+	if !runner.ran("modprobe") {
+		t.Error("never reached the driver reload rung")
+	}
+}
+
+// The timeout must not be so eager that a slow but working command is killed.
+func TestSlowCommandWithinTheTimeoutIsAllowedToFinish(t *testing.T) {
+	runner := &hangingRunner{block: map[string]bool{}, served: make(chan string, 16)}
+	s, _ := testSupervisor(&scriptedProbe{failFirst: 2}, runner)
+	s.Runner = runner
+	s.CommandTimeout = time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	s.Run(ctx)
+
+	if !runner.ran("wpa_cli") {
+		t.Error("the first recovery command never ran")
+	}
+	if st := s.Status(); st.Rung > RungReassociate {
+		t.Errorf("climbed to %v despite the command succeeding", st.Rung)
+	}
+}

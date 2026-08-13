@@ -85,7 +85,24 @@ type Runner interface {
 type ExecRunner struct{}
 
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+
+	// Do not wait on output the child has handed to something it left behind.
+	//
+	// CombinedOutput reads until the pipes close, and a pipe stays open as
+	// long as any process holds it — including grandchildren the child
+	// backgrounded and never waited for. S40network is exactly that shape: it
+	// starts ntpd with a trailing ampersand, and ntpd inherits these pipes and
+	// keeps them for as long as it runs, which is forever.
+	//
+	// Without this, cancelling the context kills the child and Wait still
+	// blocks on the grandchild's copy of the pipe. The recovery ladder calls
+	// S40network at the driver-reload rung, so the effect is a supervisor that
+	// stops supervising precisely when the network is broken, never reaching
+	// the reboot rung and never probing again.
+	cmd.WaitDelay = 5 * time.Second
+
+	return cmd.CombinedOutput()
 }
 
 // Prober tests whether packets actually route end to end.
@@ -159,6 +176,19 @@ type Supervisor struct {
 	// again — reassociation and DHCP both need a moment.
 	Settle time.Duration
 
+	// CommandTimeout bounds one recovery command.
+	//
+	// Every rung shells out, and the things it shells out to talk to a radio
+	// driver that is already misbehaving — that is why the ladder is running.
+	// A wpa_cli or modprobe that never returns would block the ladder inside
+	// act, so the supervisor stops probing, never climbs to the rung that
+	// would have fixed it, and never reboots. Nothing else is watching: the
+	// hardware watchdog is fed by the render loop, which carries on happily
+	// drawing a clock above a dead network.
+	//
+	// Defaults to 30s, which is long next to any of these commands.
+	CommandTimeout time.Duration
+
 	// ActionDelay is the pause between steps within a single recovery
 	// action, e.g. between rmmod and modprobe. Configurable rather than a
 	// hardcoded sleep so tests do not have to wait out real seconds, and so
@@ -199,6 +229,7 @@ func New(iface string, log *slog.Logger) *Supervisor {
 		Runner:          ExecRunner{},
 		Reboot:          defaultReboot,
 		Interval:        30 * time.Second,
+		CommandTimeout:  30 * time.Second,
 		FailuresPerRung: 3,
 		Settle:          15 * time.Second,
 		ActionDelay:     2 * time.Second,
@@ -221,6 +252,18 @@ func (s *Supervisor) pause(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-t.C:
 	}
+}
+
+// run executes one recovery command under its own deadline, so a command that
+// hangs cannot take the ladder with it.
+func (s *Supervisor) run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	timeout := s.CommandTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return s.Runner.Run(cctx, name, args...)
 }
 
 func (s *Supervisor) actionDelay() time.Duration {
@@ -366,38 +409,38 @@ func (s *Supervisor) handleFailure(ctx context.Context, probeErr error, now time
 func (s *Supervisor) act(ctx context.Context, rung Rung) error {
 	switch rung {
 	case RungReassociate:
-		_, err := s.Runner.Run(ctx, "wpa_cli", "-i", s.Interface, "reassociate")
+		_, err := s.run(ctx, "wpa_cli", "-i", s.Interface, "reassociate")
 		return err
 
 	case RungRestartSupplicant:
 		// Ignore the stop error: the supplicant may already be dead, which
 		// is itself a reason we are here.
-		_, _ = s.Runner.Run(ctx, "killall", "wpa_supplicant")
+		_, _ = s.run(ctx, "killall", "wpa_supplicant")
 		s.pause(ctx, s.actionDelay()/2)
-		if _, err := s.Runner.Run(ctx, "wpa_supplicant", "-B",
+		if _, err := s.run(ctx, "wpa_supplicant", "-B",
 			"-i", s.Interface, "-c", "/var/run/wpa_supplicant.conf", "-D", "nl80211"); err != nil {
 			return err
 		}
-		_, err := s.Runner.Run(ctx, "udhcpc", "-b", "-i", s.Interface, "-t", "5", "-T", "3")
+		_, err := s.run(ctx, "udhcpc", "-b", "-i", s.Interface, "-t", "5", "-T", "3")
 		return err
 
 	case RungReloadDriver:
 		// The rung that makes a reboot unnecessary in most cases: this
 		// hard-resets the radio without touching anything else.
-		_, _ = s.Runner.Run(ctx, "killall", "wpa_supplicant")
+		_, _ = s.run(ctx, "killall", "wpa_supplicant")
 		// rmmod failing is not a reason to skip modprobe: the module may
 		// already be unloaded, which is itself a plausible reason the radio
 		// is missing. Pressing on is more likely to help than bailing.
-		if _, err := s.Runner.Run(ctx, "rmmod", s.Module); err != nil {
+		if _, err := s.run(ctx, "rmmod", s.Module); err != nil {
 			s.Log.Warn("rmmod failed; attempting modprobe anyway",
 				"module", s.Module, "err", err)
 		}
 		s.pause(ctx, s.actionDelay())
-		if _, err := s.Runner.Run(ctx, "modprobe", s.Module); err != nil {
+		if _, err := s.run(ctx, "modprobe", s.Module); err != nil {
 			return fmt.Errorf("modprobe %s: %w", s.Module, err)
 		}
 		s.pause(ctx, s.actionDelay())
-		_, err := s.Runner.Run(ctx, "/etc/init.d/S40network", "start")
+		_, err := s.run(ctx, "/etc/init.d/S40network", "start")
 		return err
 
 	case RungReboot:
