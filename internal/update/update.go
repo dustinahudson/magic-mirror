@@ -357,9 +357,23 @@ func (u *Updater) download(ctx context.Context, url string, w io.Writer) (string
 		return "", fmt.Errorf("download %s: HTTP %d", url, resp.StatusCode)
 	}
 
+	// Bound the download. This writes to the boot partition, which is also
+	// where the config, the logs and the kernel live — filling it costs the
+	// mirror the ability to save anything at all, including the diagnostics
+	// that would explain why. The checksum would reject a wrong asset, but
+	// only after it had already been written.
+	//
+	// The real assets are around 11MB each, so this is a wide margin around a
+	// mistake rather than a tight fit.
+	const maxAsset = 64 << 20
+
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(w, h), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(resp.Body, maxAsset+1))
+	if err != nil {
 		return "", fmt.Errorf("download body: %w", err)
+	}
+	if n > maxAsset {
+		return "", fmt.Errorf("download %s: asset is larger than %d bytes", url, maxAsset)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

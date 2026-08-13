@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -289,7 +290,16 @@ func getJSON(ctx context.Context, client *http.Client, endpoint string, out any)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &ErrHTTPStatus{URL: endpoint, Status: resp.StatusCode}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+
+	// Bound the body. A forecast is a few kilobytes and a geocode result is
+	// less, so this is generous by three orders of magnitude — but the device
+	// has 512MB and no swap, and the thing on the other end is not always the
+	// weather API. A captive portal answering every request with an endless
+	// page is enough to have the kernel kill the process, and the restart that
+	// follows increments the failure counter. Three of those roll the mirror
+	// back to a build with the same bug.
+	const maxBody = 4 << 20
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil

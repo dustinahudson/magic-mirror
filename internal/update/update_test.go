@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func sum(b []byte) string {
@@ -305,6 +306,89 @@ func TestIsDevBuild(t *testing.T) {
 	for _, v := range rel {
 		if IsDevBuild(v) {
 			t.Errorf("IsDevBuild(%q) = true, want false", v)
+		}
+	}
+}
+
+// A download that never ends must not be written to the boot partition until
+// something else notices. That partition holds the config, the logs and the
+// kernel; filling it costs the mirror the ability to save anything at all,
+// including the diagnostics that would explain why. The checksum would reject
+// a wrong asset, but only after it had already been written.
+func TestOversizedAssetIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	running := []byte("the currently running binary")
+	if err := os.WriteFile(filepath.Join(dir, "mm.current"), running, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	// An asset that keeps coming, as fast as it is read.
+	mux.HandleFunc("/assets/"+AssetApp, func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20)
+		for {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	})
+	mux.HandleFunc("/assets/"+AssetChecksums, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", sum([]byte("whatever")), AssetApp)
+	})
+	mux.HandleFunc("/repos/", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{
+			"tag_name": "v9.0.0", "draft": false, "prerelease": false,
+			"assets": []map[string]string{
+				{"name": AssetApp, "browser_download_url": srv.URL + "/assets/" + AssetApp},
+				{"name": AssetChecksums, "browser_download_url": srv.URL + "/assets/" + AssetChecksums},
+			},
+		}})
+	})
+
+	u := New(Options{
+		Repo: "test/repo", StateDir: dir, Version: "v0.0.1", Channel: "stable",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	u.client = srv.Client()
+	u.apiBase = srv.URL
+
+	done := make(chan error, 1)
+	go func() { done <- u.CheckAndInstall(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("installed an asset of unbounded size")
+		}
+		// It must be refused for its size, not incidentally by the checksum:
+		// the point is to stop writing before the partition fills, and the
+		// checksum is only consulted once the whole thing is on disk.
+		if !strings.Contains(err.Error(), "larger than") {
+			t.Errorf("error = %v, want a refusal on size", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("still downloading after 60s; the asset is not bounded")
+	}
+
+	// And the running binary is untouched, which is the property that matters.
+	got, err := os.ReadFile(filepath.Join(dir, "mm.current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(running) {
+		t.Error("the running binary was replaced by a refused download")
+	}
+
+	// No half-written temp files left filling the partition.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".update-") {
+			t.Errorf("left a partial download behind: %s", e.Name())
 		}
 	}
 }
