@@ -75,6 +75,28 @@ type calendarConfig struct {
 // the first row and gives the remaining space to what is coming.
 type Calendar struct {
 	cfg calendarConfig
+
+	// Grouping the events by day is memoised, because both Key and Render
+	// need it and Key runs on every frame.
+	//
+	// Key exists to answer "has anything changed" cheaply enough to skip a
+	// repaint. Recomputing the grouping to answer it meant allocating a map
+	// and formatting a date per event once a second, forever, on a single
+	// ARMv6 core — the change-detection path costing more than the change.
+	// A repaint then paid it twice, once in Key and again in Render.
+	//
+	// Keyed on the snapshot pointer and the local date, which are the only
+	// two things the grouping depends on. The store publishes a new snapshot
+	// on any source's activity, so this recomputes when data actually moves —
+	// roughly every fifteen seconds — rather than sixty times a minute.
+	//
+	// Only ever touched from the render goroutine: Key and Render are both
+	// called from Draw, and nothing else holds a widget.
+	memoSnap  *store.Snapshot
+	memoDay   string
+	memoByDay map[string][]ics.Event
+	memoSpans []ics.Event
+	memoOK    bool
 }
 
 func newCalendar(raw json.RawMessage) (Widget, error) {
@@ -176,9 +198,21 @@ func spansDays(e ics.Event, loc *time.Location) bool {
 // as a chip on its first day — the same event twice, in two different shapes.
 func (w *Calendar) eventsByDay(ctx Context) (map[string][]ics.Event, []ics.Event, Staleness, bool) {
 	r := store.Get[source.CalendarData](ctx.Data, source.KeyCalendar)
+
+	// Never cached: staleness is measured against the current time, so a
+	// memoised copy would freeze the marker that says the data is old — the
+	// one piece of this that has to keep moving while nothing else does.
 	st := StalenessOf(r, ctx.Now)
+
+	day := ctx.Local().Format("2006-01-02")
+	if w.memoSnap == ctx.Data && w.memoDay == day {
+		return w.memoByDay, w.memoSpans, st, w.memoOK
+	}
+	w.memoSnap, w.memoDay = ctx.Data, day
+
 	data, ok := r.Get()
 	if !ok {
+		w.memoByDay, w.memoSpans, w.memoOK = nil, nil, false
 		return nil, nil, st, false
 	}
 	loc := ctx.Location()
@@ -207,6 +241,8 @@ func (w *Calendar) eventsByDay(ctx Context) (map[string][]ics.Event, []ics.Event
 		key := dayOf(e.Start, loc).Format("2006-01-02")
 		out[key] = append(out[key], e)
 	}
+
+	w.memoByDay, w.memoSpans, w.memoOK = out, spans, true
 	return out, spans, st, true
 }
 
