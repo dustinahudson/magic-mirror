@@ -2,9 +2,11 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -222,23 +224,29 @@ func dedupeAcrossFeeds(events []ics.Event) []ics.Event {
 func (c *CalendarSource) fetchFeed(ctx context.Context, feed Feed, opts ics.Options) ([]ics.Event, bool, error) {
 	// Normalised at fetch rather than at save: a config written by hand, or
 	// by an older build, gets the same treatment as one typed into the UI.
-	url := ics.NormalizeURL(feed.URL)
+	feedURL := ics.NormalizeURL(feed.URL)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
 	if err != nil {
-		return nil, false, err
+		// A malformed URL is reported as parse "<the whole url>": …
+		return nil, false, redactErr(err, feedURL)
 	}
 	req.Header.Set("Accept", "text/calendar")
 	req.Header.Set("User-Agent", "magic-mirror/2")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, false, err
+		// Not err on its own. Go wraps transport failures in *url.Error, which
+		// carries the whole request URL, so returning it verbatim writes the
+		// subscription token into mm.log on the card and serves it from
+		// /api/logs to anyone on the network. The redaction below existed and
+		// was only ever applied to the status-code path.
+		return nil, false, redactErr(err, feedURL)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, false, &ErrHTTPStatus{URL: redact(url), Status: resp.StatusCode}
+		return nil, false, &ErrHTTPStatus{URL: redact(feedURL), Status: resp.StatusCode}
 	}
 
 	// Cap the body. A misconfigured URL pointing at something enormous
@@ -248,7 +256,7 @@ func (c *CalendarSource) fetchFeed(ctx context.Context, feed Feed, opts ics.Opti
 
 	res, err := ics.Parse(body, opts)
 	if err != nil {
-		return nil, false, err
+		return nil, false, redactErr(err, feedURL)
 	}
 
 	for i := range res.Events {
@@ -256,6 +264,40 @@ func (c *CalendarSource) fetchFeed(ctx context.Context, feed Feed, opts ics.Opti
 		res.Events[i].Color = feed.Color
 	}
 	return res.Events, res.Truncated, nil
+}
+
+// redactErr removes a feed URL from an error before it can reach a log, the
+// status endpoint, or the screen.
+//
+// redact alone is not enough, because the errors that matter most already
+// contain the URL by the time we see them. Go wraps every transport failure
+// in *url.Error, whose Error() prints the full request URL — and a feed URL
+// is a credential: anyone holding it can read the calendar.
+//
+// Where that landed in practice: a mirror that could not resolve DNS logged
+// the complete Google subscription link, token and all, into mm.log on the
+// FAT card. /api/logs then served it to anyone on the network, and the status
+// page put it on the settings screen. The device is a display in somebody
+// else's house.
+func redactErr(err error, raw string) error {
+	if err == nil {
+		return nil
+	}
+
+	// The common case, and the one that leaked: keep the operation and the
+	// underlying cause, replace the URL. Nested causes carry the host at most.
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s %s: %w", ue.Op, redact(raw), ue.Err)
+	}
+
+	// Anything else that happens to have embedded the URL in its text.
+	if raw != "" {
+		if msg := err.Error(); strings.Contains(msg, raw) {
+			return errors.New(strings.ReplaceAll(msg, raw, redact(raw)))
+		}
+	}
+	return err
 }
 
 func summarise(errs map[string]string) string {
