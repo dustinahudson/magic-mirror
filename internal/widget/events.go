@@ -105,7 +105,9 @@ func (w *UpcomingEvents) Key(ctx Context) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "events|%s|%v|%d", st.Key(), ok, len(events))
 	for _, e := range events {
-		fmt.Fprintf(&b, "|%s@%s", e.Summary, e.Start.Format("0102T1504"))
+		// Colour is drawn beside each row, and it changes without the title
+		// or the time changing — see the note in the calendar widget's Key.
+		fmt.Fprintf(&b, "|%s@%s#%s", e.Summary, e.Start.Format("0102T1504"), e.Color)
 	}
 	// Day boundaries change the "Today"/"Tomorrow" labels.
 	fmt.Fprintf(&b, "|%s", ctx.Local().Format("2006-01-02"))

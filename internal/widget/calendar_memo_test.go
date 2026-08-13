@@ -146,3 +146,67 @@ func TestStalenessIsNotFrozenByTheMemo(t *testing.T) {
 		}
 	})
 }
+
+// Recolouring a calendar changes the tile, but it arrives by an unusual
+// route: the feed is refetched and the events come back with the same titles
+// at the same times, carrying a new colour. Keyed on title and time alone the
+// tile looks unchanged, the repaint is skipped, and the old colour stays on
+// screen.
+//
+// What that looked like from the settings page: change a colour, wait,
+// nothing happens, press save again and it appears — because the second save
+// forces the full repaint the first one had already earned.
+func TestCalendarKeyChangesWhenOnlyTheColourDoes(t *testing.T) {
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	ev := eventAt("standup", now.Add(2*time.Hour))
+
+	ev.Color = "#52FA7F"
+	w, data := calendarWith(t, []ics.Event{ev})
+	before := w.Key(ctxFor(data, now))
+
+	// Exactly what a recolour produces: same title, same time, new colour.
+	ev.Color = "#FF9F5A"
+	w2, data2 := calendarWith(t, []ics.Event{ev})
+	after := w2.Key(ctxFor(data2, now))
+
+	if before == after {
+		t.Error("the calendar's key is identical after a recolour, so the tile never repaints")
+	}
+}
+
+// The same for multi-day bars, which are keyed separately.
+func TestCalendarSpanKeyChangesWithColour(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	span := ics.Event{
+		UID: "trip", Summary: "Trip",
+		Start: now, End: now.AddDate(0, 0, 4),
+		AllDay: true, FeedID: "f1", Color: "#52FA7F",
+	}
+
+	w, data := calendarWith(t, []ics.Event{span})
+	before := w.Key(ctxFor(data, now))
+
+	span.Color = "#FF9F5A"
+	w2, data2 := calendarWith(t, []ics.Event{span})
+	after := w2.Key(ctxFor(data2, now))
+
+	if before == after {
+		t.Error("a spanning event's key ignores its colour, so a recoloured bar never repaints")
+	}
+}
+
+// And an identical config must still produce an identical key, or every frame
+// repaints and the dirty-rect tracking stops meaning anything.
+func TestCalendarKeyIsStableWhenNothingChanges(t *testing.T) {
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	ev := eventAt("standup", now.Add(2*time.Hour))
+	ev.Color = "#52FA7F"
+
+	w, data := calendarWith(t, []ics.Event{ev})
+	first := w.Key(ctxFor(data, now))
+	second := w.Key(ctxFor(data, now.Add(20*time.Second)))
+
+	if first != second {
+		t.Errorf("key changed with nothing to show for it:\n  %s\n  %s", first, second)
+	}
+}

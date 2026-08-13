@@ -282,7 +282,19 @@ func (w *Calendar) Key(ctx Context) string {
 		}
 		fmt.Fprintf(&b, "|%d:", i)
 		for _, e := range evs {
-			fmt.Fprintf(&b, "%s@%s;", e.Summary, e.Start.Format("1504"))
+			// Colour belongs in the key as much as the title does.
+			//
+			// It is drawn, so a change to it changes the tile — but it arrives
+			// by a different route. Recolouring a calendar refetches the feed,
+			// and the events come back with the same titles at the same times
+			// carrying a new colour. Keyed on title and time alone the tile
+			// looks unchanged, so the repaint is skipped and the old colour
+			// stays on screen until something else forces a full redraw.
+			//
+			// What that looked like from the settings page: change a colour,
+			// wait, nothing happens, press save again and it appears. The
+			// second save forces the repaint the first one had already earned.
+			fmt.Fprintf(&b, "%s@%s#%s;", e.Summary, e.Start.Format("1504"), e.Color)
 		}
 	}
 
@@ -293,8 +305,8 @@ func (w *Calendar) Key(ctx Context) string {
 	loc := ctx.Location()
 	for _, e := range spans {
 		first, last := eventDays(e, loc)
-		fmt.Fprintf(&b, "|s:%s%s-%s", e.Summary,
-			first.Format("0102"), last.Format("0102"))
+		fmt.Fprintf(&b, "|s:%s%s-%s#%s", e.Summary,
+			first.Format("0102"), last.Format("0102"), e.Color)
 	}
 	return b.String()
 }
