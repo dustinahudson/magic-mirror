@@ -336,14 +336,19 @@
         What the mirror has been doing. Worth a look when something above is
         not green — and worth sending on if you are asking someone else.
       </p>
+      <!-- No link to dmesg. The endpoint serves /var/log/dmesg, which this
+           image does not write — klogd forwards the kernel ring buffer into
+           the system log instead, so "System" already carries the startup
+           messages and a separate link would only ever have been a 404. -->
       <div class="logs">
         <a href="/api/logs?file=mm.log" target="_blank" rel="noopener">Mirror</a>
         <a href="/api/logs?file=network.log" target="_blank" rel="noopener">Network</a>
-        <a href="/api/logs?file=messages" target="_blank" rel="noopener">System</a>
-        <a href="/api/logs?file=dmesg" target="_blank" rel="noopener">Startup</a>
+        <a href="/api/logs?file=messages" target="_blank" rel="noopener">System and startup</a>
       </div>
       <p class="hint">
-        Each opens the most recent part of that log in a new tab.
+        Each opens the most recent part of that log in a new tab. Start with
+        <b>Mirror</b>; <b>Network</b> covers getting online, and
+        <b>System and startup</b> carries the kernel's own messages.
       </p>
     </div>
   </section>
