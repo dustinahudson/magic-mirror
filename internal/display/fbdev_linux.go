@@ -90,6 +90,10 @@ type FrameBuffer struct {
 	rLen, gLen, bLen uint32
 	fast32           bool // 8/8/8 channels in a 4-byte pixel
 	fast565          bool
+
+	// clamped records that the mapping was smaller than the geometry, so
+	// Describe can say so rather than leaving a short display unexplained.
+	clamped bool
 }
 
 // OpenFrameBuffer opens a framebuffer device, e.g. "/dev/fb0".
@@ -123,16 +127,28 @@ func OpenFrameBuffer(path string) (*FrameBuffer, error) {
 		return nil, fmt.Errorf("%s: mmap %d bytes: %w", path, finfo.SmemLen, err)
 	}
 
+	bpp := int(vinfo.BitsPerPixel) / 8
+	stride := int(finfo.LineLength)
+	width, height := int(vinfo.Xres), int(vinfo.Yres)
+
+	bounds, err := fitBounds(width, height, stride, bpp, len(mem))
+	if err != nil {
+		f.Close()
+		_ = unix.Munmap(mem)
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
 	fb := &FrameBuffer{
 		f:      f,
 		mem:    mem,
-		bounds: image.Rect(0, 0, int(vinfo.Xres), int(vinfo.Yres)),
-		stride: int(finfo.LineLength),
-		bpp:    int(vinfo.BitsPerPixel) / 8,
+		bounds: bounds,
+		stride: stride,
+		bpp:    bpp,
 		vinfo:  vinfo,
 		rOff:   vinfo.Red.Offset, gOff: vinfo.Green.Offset, bOff: vinfo.Blue.Offset,
 		rLen: vinfo.Red.Length, gLen: vinfo.Green.Length, bLen: vinfo.Blue.Length,
 	}
+	fb.clamped = bounds.Dy() != int(vinfo.Yres)
 
 	fb.fast32 = fb.bpp == 4 && fb.rLen == 8 && fb.gLen == 8 && fb.bLen == 8
 	fb.fast565 = fb.bpp == 2 &&
@@ -154,9 +170,14 @@ func (fb *FrameBuffer) Describe() string {
 	case fb.fast565:
 		path = "fast565"
 	}
-	return fmt.Sprintf("%dx%d %dbpp stride=%d r=%d/%d g=%d/%d b=%d/%d (%s)",
+	note := ""
+	if fb.clamped {
+		note = fmt.Sprintf(" CLAMPED from %d rows: the mapping is smaller than the reported geometry",
+			fb.vinfo.Yres)
+	}
+	return fmt.Sprintf("%dx%d %dbpp stride=%d r=%d/%d g=%d/%d b=%d/%d (%s)%s",
 		fb.bounds.Dx(), fb.bounds.Dy(), fb.bpp*8, fb.stride,
-		fb.rOff, fb.rLen, fb.gOff, fb.gLen, fb.bOff, fb.bLen, path)
+		fb.rOff, fb.rLen, fb.gOff, fb.gLen, fb.bOff, fb.bLen, path, note)
 }
 
 func (fb *FrameBuffer) Bounds() image.Rectangle { return fb.bounds }
