@@ -177,7 +177,9 @@ func (m *Manager) awaitNetwork(ctx context.Context, log *slog.Logger) bool {
 func (m *Manager) Reconfigure(fetchers []Fetcher) {
 	m.mu.Lock()
 	m.fetchers = append([]Fetcher(nil), fetchers...)
+	keys := make([]string, 0, len(fetchers))
 	for _, f := range fetchers {
+		keys = append(keys, f.Key())
 		if f.Interval() > 0 {
 			m.store.SetTTL(f.Key(), 3*f.Interval())
 		}
@@ -185,6 +187,13 @@ func (m *Manager) Reconfigure(fetchers []Fetcher) {
 	old := m.reload
 	m.reload = make(chan struct{})
 	m.mu.Unlock()
+
+	// Retire the data belonging to fetchers that are gone. Deleting a calendar
+	// or clearing the weather location stops the fetching, and without this
+	// its last reading would stay in the store for the life of the process:
+	// visible on the status page, and served to any widget still asking, with
+	// nothing left running that could ever refresh it.
+	m.store.Keep(keys)
 
 	if old != nil {
 		close(old)

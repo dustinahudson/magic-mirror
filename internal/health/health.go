@@ -164,10 +164,20 @@ func (m *Monitor) persistClock() {
 	if now.Year() < 2020 {
 		return
 	}
-	if now.Sub(m.clockWritten) < clockInterval {
+
+	// Throttle on elapsed time, not on the wall clock.
+	//
+	// UTC() strips the monotonic reading, so comparing two of these compares
+	// wall clocks — and this device's wall clock moves in steps. It boots on a
+	// restored time and NTP corrects it, which is usually forwards but is
+	// backwards whenever the saved value ran ahead. A backward step leaves the
+	// last write in the future, and the throttle then suppresses every write
+	// until real time catches up, which is exactly the window where the saved
+	// clock is wrong and most wants replacing.
+	if !m.clockWritten.IsZero() && time.Since(m.clockWritten) < clockInterval {
 		return
 	}
-	m.clockWritten = now
+	m.clockWritten = time.Now()
 
 	path := filepath.Join(m.stateDir, "clock")
 	if err := durable.WriteFile(path, []byte(now.Format("200601021504.05")+"\n"), 0o644); err != nil {

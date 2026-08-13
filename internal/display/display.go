@@ -63,16 +63,3 @@ func (t Tee) Close() error {
 	}
 	return firstErr
 }
-
-// union returns the smallest rectangle covering every rect in rs, clipped to
-// bounds. An empty list yields bounds — "nil dirty means everything".
-func union(rs []image.Rectangle, bounds image.Rectangle) image.Rectangle {
-	if len(rs) == 0 {
-		return bounds
-	}
-	out := rs[0]
-	for _, r := range rs[1:] {
-		out = out.Union(r)
-	}
-	return out.Intersect(bounds)
-}

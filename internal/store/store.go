@@ -269,16 +269,7 @@ func (s *Store) publish(key string, e Entry) {
 	now := s.now()
 	// Age out anything past its TTL as we go, so staleness appears without
 	// needing a background sweeper.
-	for k, v := range entries {
-		ttl, ok := s.ttls[k]
-		if !ok || ttl <= 0 || !v.Status.HasValue() {
-			continue
-		}
-		if now.Sub(v.LastSuccess) > ttl {
-			v.Status = Stale
-			entries[k] = v
-		}
-	}
+	ageOut(entries, s.ttls, now)
 
 	s.cur.Store(&Snapshot{at: now, entries: entries})
 }
@@ -294,9 +285,51 @@ func (s *Store) Refresh() {
 	maps.Copy(entries, old.entries)
 
 	now := s.now()
+	ageOut(entries, s.ttls, now)
+	s.cur.Store(&Snapshot{at: now, entries: entries})
+}
+
+// Keep restricts the store to the given keys, dropping everything else.
+//
+// Sources come and go while the mirror is running: deleting a calendar or
+// clearing the weather location retires a fetcher, and without this its last
+// reading stays in the store forever. The widget for it is gone from the
+// layout, but the data is not, so anything still asking for that key — the
+// status endpoint, a widget re-added later — is served a reading that nothing
+// will ever refresh again.
+//
+// Called with the keys of the fetchers that survived a reconfiguration.
+func (s *Store) Keep(keys []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	wanted := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		wanted[k] = true
+	}
+
+	old := s.Load()
+	entries := make(map[string]Entry, len(old.entries))
+	for k, v := range old.entries {
+		if wanted[k] {
+			entries[k] = v
+		}
+	}
+	for k := range s.ttls {
+		if !wanted[k] {
+			delete(s.ttls, k)
+		}
+	}
+	s.cur.Store(&Snapshot{at: s.now(), entries: entries})
+}
+
+// ageOut demotes readings past their TTL. Shared by publish and Refresh so
+// the two cannot disagree about what "stale" means — they did, once: one
+// aged anything holding a value and the other only what was still Fresh.
+func ageOut(entries map[string]Entry, ttls map[string]time.Duration, now time.Time) {
 	for k, v := range entries {
-		ttl, ok := s.ttls[k]
-		if !ok || ttl <= 0 || v.Status != Fresh {
+		ttl, ok := ttls[k]
+		if !ok || ttl <= 0 || !v.Status.HasValue() {
 			continue
 		}
 		if now.Sub(v.LastSuccess) > ttl {
@@ -304,5 +337,4 @@ func (s *Store) Refresh() {
 			entries[k] = v
 		}
 	}
-	s.cur.Store(&Snapshot{at: now, entries: entries})
 }

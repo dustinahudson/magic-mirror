@@ -202,28 +202,59 @@ func TestReconfigureStopsRemovedSources(t *testing.T) {
 	}
 }
 
-// Reconfigure must not blank the screen. Readings already published stay in
-// the store while the new set gets its first results.
-func TestReconfigureKeepsPublishedData(t *testing.T) {
+// Reconfigure must not blank the screen. A source that survives the change
+// keeps its reading, so the display holds what it had while the new set gets
+// its first results — adding a calendar must not blank the weather.
+func TestReconfigureKeepsDataForSurvivingSources(t *testing.T) {
 	st := store.New()
 	m := NewManager(st, quiet())
-	p := newProbe(KeyWeather, false)
-	m.Add(p)
+	weather := newProbe(KeyWeather, false)
+	m.Add(weather)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go m.Run(ctx)
 
-	if !waitFetch(t, p) {
+	if !waitFetch(t, weather) {
 		t.Fatal("no initial fetch")
 	}
 	// Let the store record the success before swapping.
 	time.Sleep(100 * time.Millisecond)
 
-	m.Reconfigure([]Fetcher{newProbe(KeyCalendar, false)})
+	// Weather survives; a calendar joins it.
+	m.Reconfigure([]Fetcher{weather, newProbe(KeyCalendar, false)})
 
 	if _, ok := store.Get[string](st.Load(), KeyWeather).Get(); !ok {
-		t.Error("a published reading vanished across Reconfigure")
+		t.Error("a surviving source lost its reading across Reconfigure")
+	}
+}
+
+// A source that is removed must lose its reading with it. Nothing is left
+// running that could refresh it, so keeping it means the status page and any
+// widget still asking are served data that is frozen forever.
+func TestReconfigureDropsDataForRemovedSources(t *testing.T) {
+	st := store.New()
+	m := NewManager(st, quiet())
+	weather := newProbe(KeyWeather, false)
+	m.Add(weather)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+
+	if !waitFetch(t, weather) {
+		t.Fatal("no initial fetch")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, ok := store.Get[string](st.Load(), KeyWeather).Get(); !ok {
+		t.Fatal("the reading was never published to begin with")
+	}
+
+	// The weather location was cleared: that fetcher is gone.
+	m.Reconfigure([]Fetcher{newProbe(KeyCalendar, false)})
+
+	if _, ok := store.Get[string](st.Load(), KeyWeather).Get(); ok {
+		t.Error("a removed source left its reading behind, with nothing to refresh it")
 	}
 }
 

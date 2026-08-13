@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -131,39 +132,57 @@ func run() error {
 		return err
 	}
 
+	// A display that fails to open is a fault to report, not a reason to exit.
+	//
+	// Asking for no display at all is a mistake in the command line and stays
+	// fatal. A display that was asked for and could not be opened is a
+	// different thing entirely: exiting there produces a mirror that is broken
+	// *and* silent — no web UI, no logs, no update channel — and the restart
+	// loop that follows rolls back to a build with the same problem. Carrying
+	// on leaves a device that can be asked what went wrong, and that can be
+	// sent a fix.
+	//
+	// The render loop keeps running either way, which also keeps the watchdog
+	// fed. A mirror rendering to nothing is not useful, but it is reachable,
+	// and reachable is what decides whether anybody has to drive anywhere.
 	var sinks display.Tee
 	if *fbPath != "" {
 		fb, err := display.OpenFrameBuffer(*fbPath)
 		if err != nil {
-			return fmt.Errorf("framebuffer: %w", err)
+			log.Error("framebuffer unavailable; carrying on so the mirror stays reachable",
+				"path", *fbPath, "err", err)
+		} else {
+			defer fb.Close()
+			log.Info("framebuffer open", "path", *fbPath, "mode", fb.Describe())
+			bounds = fb.Bounds()
+			sinks = append(sinks, fb)
 		}
-		defer fb.Close()
-		log.Info("framebuffer open", "path", *fbPath, "mode", fb.Describe())
-		bounds = fb.Bounds()
-		sinks = append(sinks, fb)
 	}
 	if *previewOn != "" {
 		pv, err := display.NewPreview(*previewOn, bounds)
 		if err != nil {
-			return err
+			log.Error("preview unavailable; carrying on", "addr", *previewOn, "err", err)
+		} else {
+			defer pv.Close()
+			log.Info("preview serving", "url", "http://localhost"+*previewOn)
+			sinks = append(sinks, pv)
 		}
-		defer pv.Close()
-		log.Info("preview serving", "url", "http://localhost"+*previewOn)
-		sinks = append(sinks, pv)
 	}
 	if *pngDir != "" {
 		pw, err := display.NewPNGWriter(*pngDir, bounds, 0)
 		if err != nil {
-			return err
+			log.Error("frame directory unavailable; carrying on", "dir", *pngDir, "err", err)
+		} else {
+			defer pw.Close()
+			log.Info("writing frames", "dir", *pngDir)
+			sinks = append(sinks, pw)
 		}
-		defer pw.Close()
-		log.Info("writing frames", "dir", *pngDir)
-		sinks = append(sinks, pw)
 	}
-	if len(sinks) != len(p.Displays) {
-		// The plan and the assembly must not drift: a backend that was
-		// planned and not opened is a screen nobody is drawing to.
-		return fmt.Errorf("planned %d display backends, opened %d", len(p.Displays), len(sinks))
+	if len(sinks) == 0 {
+		// Worth saying loudly and exactly once: every backend that was asked
+		// for failed, so nothing is being drawn anywhere.
+		log.Error("no display backend opened; the mirror is running blind",
+			"planned", strings.Join(p.Displays, ","))
 	}
 
 	data := store.New()
