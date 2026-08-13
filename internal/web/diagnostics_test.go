@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -307,5 +308,55 @@ func TestSaveIsSilentForSettingsThatApplyLive(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&got)
 	if got.Note != "" {
 		t.Errorf("note = %q for a change that applies live", got.Note)
+	}
+}
+
+// The Status page links to the logs by name. Those names have to be ones the
+// handler will actually serve, and nothing but this test connects the two —
+// the list lives in the HTML and the allow-list lives in Go, so they can
+// drift apart silently and the first person to find out is someone tapping a
+// link on a phone in front of a mirror that is already misbehaving.
+func TestStatusPageLinksToLogsTheServerWillServe(t *testing.T) {
+	page, err := uiFS.ReadFile("ui.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pull every ?file= the page links to.
+	re := regexp.MustCompile(`/api/logs\?file=([a-zA-Z0-9._-]+)`)
+	matches := re.FindAllSubmatch(page, -1)
+	if len(matches) == 0 {
+		t.Fatal("the settings page links to no logs at all")
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := testServer(t, filepath.Join(dir, "config.json"))
+	s.stateDir = dir
+
+	seen := map[string]bool{}
+	for _, m := range matches {
+		name := string(m[1])
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+
+		w := httptest.NewRecorder()
+		s.handleLogs(w, httptest.NewRequest(http.MethodGet, "/api/logs?file="+name, nil))
+
+		// A missing file is fine — /var/log/messages does not exist on a
+		// developer's machine. A rejected *name* is not: that is a link the
+		// server refuses on principle, and it would never work anywhere.
+		if w.Code == http.StatusBadRequest {
+			t.Errorf("the page links to %q, which the server rejects as an unknown log", name)
+		}
+	}
+
+	// And the one that matters most must be among them.
+	if !seen["mm.log"] {
+		t.Error("the page does not link to mm.log, which is where a failure is explained")
 	}
 }

@@ -137,6 +137,16 @@
 
   .empty { color: var(--faint); text-align: center; padding: 2rem 1rem; }
 
+  /* Log links. Buttons rather than bare links, because on a phone held at
+     arm's length in front of a mirror, a line of underlined words is a
+     tapping accuracy problem. */
+  .logs { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .logs a {
+    padding: .5rem .9rem; border: 1px solid var(--line2); border-radius: 8px;
+    color: var(--fg); text-decoration: none; font-size: .92rem;
+  }
+  .logs a:hover { border-color: var(--accent); color: var(--accent); }
+
   #toast {
     position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
     padding: .8rem 1.2rem; border-radius: 10px; font-size: .92rem;
@@ -315,6 +325,27 @@
     </p>
     <div id="status"></div>
     <p class="hint">Version <span id="version">…</span></p>
+
+    <!-- The logs are on the card, and reading them used to mean taking the
+         mirror off the wall to get at it. They have been served over HTTP for
+         a while, but only to somebody who already knew the address to type,
+         which is nearly the same as not serving them. -->
+    <div class="card">
+      <h3>Logs</h3>
+      <p class="sub">
+        What the mirror has been doing. Worth a look when something above is
+        not green — and worth sending on if you are asking someone else.
+      </p>
+      <div class="logs">
+        <a href="/api/logs?file=mm.log" target="_blank" rel="noopener">Mirror</a>
+        <a href="/api/logs?file=network.log" target="_blank" rel="noopener">Network</a>
+        <a href="/api/logs?file=messages" target="_blank" rel="noopener">System</a>
+        <a href="/api/logs?file=dmesg" target="_blank" rel="noopener">Startup</a>
+      </div>
+      <p class="hint">
+        Each opens the most recent part of that log in a new tab.
+      </p>
+    </div>
   </section>
 </main>
 
