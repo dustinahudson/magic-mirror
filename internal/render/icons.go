@@ -28,6 +28,18 @@ func NewIconCache() *IconCache {
 	return &IconCache{scaled: map[iconKey]*image.RGBA{}}
 }
 
+// maxCachedIcons bounds the scaled-artwork cache.
+//
+// Keyed by name and pixel size, and the sizes are computed from tile geometry
+// and font metrics rather than chosen from a list — so the number of distinct
+// entries is decided by arithmetic, not by anything that counted them. Each
+// one holds a scaled RGBA image, and this process runs for months.
+//
+// Far above what a layout produces: a handful of sizes across the icon set.
+// Past it, icons still render, just rescaled each time — the same trade the
+// glyph cache makes.
+const maxCachedIcons = 512
+
 // Get returns the named icon scaled to fit a w×h box, preserving aspect
 // ratio. Reports false when no such icon is embedded.
 func (c *IconCache) Get(name string, w, h int) (*image.RGBA, bool) {
@@ -47,12 +59,16 @@ func (c *IconCache) Get(name string, w, h int) (*image.RGBA, bool) {
 	if !ok {
 		// Cache the miss too: a config naming a nonexistent icon should not
 		// re-hit the asset lookup every frame.
-		c.scaled[key] = nil
+		if len(c.scaled) < maxCachedIcons {
+			c.scaled[key] = nil
+		}
 		return nil, false
 	}
 
 	out := FitScale(src, w, h)
-	c.scaled[key] = out
+	if len(c.scaled) < maxCachedIcons {
+		c.scaled[key] = out
+	}
 	return out, true
 }
 
