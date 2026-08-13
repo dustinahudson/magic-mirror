@@ -154,7 +154,15 @@ func (c *Compositor) drawAddress(ctx widget.Context) image.Rectangle {
 		return image.Rectangle{}
 	}
 
-	render.Fill(c.frame, r, render.Background)
+	// Clear the old label as well as the new one.
+	//
+	// The label is right-aligned, so a shorter address starts further right
+	// and leaves the tail of the previous one behind. That is not theoretical:
+	// the address is an IP, and a DHCP lease moving from 192.168.1.244 to
+	// 192.168.1.50 is one character shorter. What remains on screen is a
+	// fragment of the address that no longer works, in the one corner someone
+	// looks at when they are trying to reach the mirror.
+	render.Fill(c.frame, r.Union(c.addressRect).Intersect(b), render.Background)
 	face.DrawTop(c.frame, r.Min.X, r.Min.Y, addr, render.Faint)
 	return r
 }
@@ -256,12 +264,27 @@ func (c *Compositor) Draw(ctx widget.Context) []image.Rectangle {
 		// nothing — the point of dirty-rect tracking is that a static
 		// corner label does not force a present every second.
 		if full || addr != c.addressKey || overlapped {
+			prev := c.addressRect
 			if r := c.drawAddress(ctx); !r.Empty() {
-				if !full && (!r.Eq(c.addressRect) || !overlapped) {
-					dirty = append(dirty, r)
+				// Present the union. drawAddress clears the old label as well
+				// as the new one, and a region cleared but never presented
+				// leaves the fragment on the panel even though the frame in
+				// memory is correct.
+				changed := r.Union(prev)
+				if !full && (!changed.Eq(prev) || !overlapped) {
+					dirty = append(dirty, changed)
 				}
 				c.addressRect = r
 			} else {
+				// Nothing to print now — the address was lost, not shortened.
+				// The label still has to come off the screen, or the mirror
+				// goes on advertising an address that no longer answers.
+				if !prev.Empty() {
+					render.Fill(c.frame, prev, render.Background)
+					if !full {
+						dirty = append(dirty, prev)
+					}
+				}
 				c.addressRect = image.Rectangle{}
 			}
 			c.addressKey = addr

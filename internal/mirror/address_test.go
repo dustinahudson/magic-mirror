@@ -151,3 +151,65 @@ func TestAddressAppearingIsPresented(t *testing.T) {
 		t.Error("the address was drawn but its region was never reported as dirty")
 	}
 }
+
+// The label is right-aligned, so a shorter address starts further right and
+// used to leave the tail of the previous one on screen. The address is an IP,
+// and a DHCP lease moving from 192.168.1.244 to 192.168.1.50 is exactly one
+// character shorter — which left a fragment of an address that no longer
+// answers, in the one corner someone reads when trying to reach the mirror.
+func TestShorterAddressLeavesNoFragment(t *testing.T) {
+	bounds := image.Rect(0, 0, 1280, 720)
+	addr := "http://192.168.1.244"
+	comp := addressCompositor(bounds, &addr)
+	ctx := drawCtx(store.New(), render.NewFontSet())
+
+	comp.Draw(ctx)
+	long := litIn(comp.Frame(), corner(bounds))
+	if long == 0 {
+		t.Fatal("the first address was never drawn")
+	}
+
+	addr = "http://192.168.1.50"
+	comp.Draw(ctx)
+	short := litIn(comp.Frame(), corner(bounds))
+
+	// Fewer characters must mean fewer lit pixels. A leftover fragment shows
+	// up as the short address costing as much as the long one.
+	if short >= long {
+		t.Errorf("a shorter address lit %d pixels against the longer one's %d; "+
+			"the old label was not cleared", short, long)
+	}
+}
+
+// An address that disappears has to come off the screen. Otherwise the mirror
+// goes on advertising somewhere that no longer answers, which is worse than
+// showing nothing: it sends whoever reads it to a dead end.
+func TestLostAddressIsErased(t *testing.T) {
+	bounds := image.Rect(0, 0, 1280, 720)
+	addr := "http://192.168.1.244"
+	comp := addressCompositor(bounds, &addr)
+	ctx := drawCtx(store.New(), render.NewFontSet())
+
+	comp.Draw(ctx)
+	if litIn(comp.Frame(), corner(bounds)) == 0 {
+		t.Fatal("the address was never drawn")
+	}
+
+	addr = ""
+	dirty := comp.Draw(ctx)
+
+	if n := litIn(comp.Frame(), corner(bounds)); n != 0 {
+		t.Errorf("%d pixels still lit after the address was lost", n)
+	}
+	// And the cleared region must be presented, or the panel keeps showing it
+	// however correct the frame in memory is.
+	presented := false
+	for _, d := range dirty {
+		if d.Overlaps(corner(bounds)) {
+			presented = true
+		}
+	}
+	if !presented {
+		t.Error("the corner was cleared but never presented")
+	}
+}
