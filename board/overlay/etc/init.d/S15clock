@@ -19,7 +19,9 @@
 # the partition holding the saved time was even mounted, so the restore
 # could never have worked.
 
-CLOCK=/boot/clock
+# Overridable so the validation below can be tested off-device. The default
+# is the production path and nothing on the mirror sets this.
+CLOCK="${MM_CLOCK:-/boot/clock}"
 
 case "$1" in
   start)
@@ -48,7 +50,16 @@ case "$1" in
 
   stop)
     # Save on the way down too, so a clean shutdown loses nothing.
-    date -u +%Y%m%d%H%M.%S > "$CLOCK" 2>/dev/null || true
+    #
+    # Write, rename, then sync — a bare redirect truncates first, and a power
+    # cut during it leaves a zero-length clock. That is not hypothetical: it
+    # is what came back on a real card, and it costs the next boot its HTTPS
+    # until NTP returns. Same reasoning as the write in S40network.
+    if date -u +%Y%m%d%H%M.%S > "$CLOCK.tmp" 2>/dev/null; then
+      mv "$CLOCK.tmp" "$CLOCK" 2>/dev/null && sync
+    else
+      rm -f "$CLOCK.tmp" 2>/dev/null
+    fi
     ;;
 
   restart|reload)

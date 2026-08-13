@@ -60,13 +60,26 @@ run: host
 	$(DIST)/magicmirror -preview :8080 -config config.json -v
 
 .PHONY: test
-test:
+test: test-shell
 	go test $(PKGS)
+
+# The init scripts run before the application exists and decide whether it
+# ever starts, so a defect in one of them always costs a trip to the mirror.
+# Part of `make test` rather than an optional extra for exactly that reason.
+.PHONY: test-shell
+test-shell:
+	@sh test/shell/run.sh
 
 .PHONY: lint
 lint:
 	go vet $(PKGS)
 	gofmt -l . | grep -v '^board/' || true
+	@# Syntax-check the init scripts under the shell the device actually
+	@# uses. A parse error here is a mirror that does not boot.
+	@for s in board/overlay/etc/init.d/S* board/overlay/sbin/*; do \
+		sh -n "$$s" || exit 1; \
+	done
+	@echo "init scripts parse"
 
 # --- OS image ---
 

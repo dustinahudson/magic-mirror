@@ -16,7 +16,11 @@
 # healthy. That is the safety net for "we shipped a binary that crashes on
 # this hardware", which is otherwise unrecoverable on a headless device.
 
-BOOT=/boot
+# Overridable so the rollback logic can be exercised without a device. The
+# defaults are the production values, and nothing on the mirror sets these:
+# this script decides whether a bad build is recoverable, which makes it the
+# last place to accept "tested by deploying it".
+BOOT="${MM_BOOT:-/boot}"
 CURRENT="$BOOT/mm.current"
 PREVIOUS="$BOOT/mm.previous"
 HEALTH="$BOOT/health"
@@ -24,8 +28,13 @@ FAILURES="$BOOT/failures"
 CONFIG="$BOOT/config.json"
 LOG="$BOOT/logs/mm.log"
 
-MAX_FAILURES=3
-LOG_MAX_BYTES=1048576
+MAX_FAILURES="${MM_MAX_FAILURES:-3}"
+LOG_MAX_BYTES="${MM_LOG_MAX_BYTES:-1048576}"
+
+# The pauses exist to stop a crash loop saturating the CPU or the console.
+# A test that had to wait them out would be a test nobody runs.
+RESPAWN_PAUSE="${MM_RESPAWN_PAUSE:-2}"
+NO_BINARY_PAUSE="${MM_NO_BINARY_PAUSE:-10}"
 
 log() {
   echo "$(date '+%Y-%m-%dT%H:%M:%S') mm-supervise: $*" | tee -a "$LOG"
@@ -54,7 +63,7 @@ if [ ! -x "$CURRENT" ]; then
   log "no executable at $CURRENT"
   # Sleep before exiting: init would otherwise respawn us in a tight loop and
   # make the console unusable for the person trying to fix it.
-  sleep 10
+  sleep "$NO_BINARY_PAUSE"
   exit 1
 fi
 
@@ -99,5 +108,5 @@ if [ "$status" -eq 0 ]; then
 fi
 
 # Brief pause so a crash-on-startup cannot saturate the CPU respawning.
-sleep 2
+sleep "$RESPAWN_PAUSE"
 exit "$status"
