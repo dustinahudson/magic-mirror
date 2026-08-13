@@ -1,0 +1,76 @@
+#!/bin/sh
+#
+# Rewrite resolv.conf into a form every resolver on this device can read, and
+# bound how long a lookup may stall.
+#
+# Buildroot's udhcpc script tags each line it writes with a trailing
+# "# $interface", so it can find and remove them again on the next lease:
+#
+#	search lan # wlan0
+#	nameserver 192.168.1.1 # wlan0
+#
+# resolv.conf has no trailing comments. A comment must begin the line, so
+# everything after the value is part of the value, and BusyBox reads it that
+# way:
+#
+#	nslookup: bad address '192.168.1.1 # wlan0'
+#
+# Go splits the line on whitespace and takes the first field, which is why the
+# mirror resolves names perfectly well while every shell tool on the same
+# device cannot. That asymmetry bites exactly when it matters most — somebody
+# diagnosing a network problem by hand, over ssh, on hardware nobody can
+# visit — and it is invisible until then.
+#
+# This runs as a hook after the stock script rather than replacing it, so the
+# address and route handling it does is left alone. It rewrites the file from
+# the lease each time, so the tagged lines the stock script just appended are
+# replaced rather than accumulated.
+
+case "$1" in
+bound | renew) ;;
+*) exit 0 ;;
+esac
+
+# A lease carrying no nameservers is not an instruction to forget the ones we
+# have. Some servers omit them on renewal, and rewriting the file anyway would
+# leave a device that resolves nothing — with no way to ask it why.
+[ -n "$dns" ] || exit 0
+
+RESOLV_CONF=/etc/resolv.conf
+TMP="$RESOLV_CONF.tmp"
+
+{
+	# Bound how long one unanswered query may cost.
+	#
+	# Go's resolver defaults to five seconds and two attempts, and that is
+	# exactly the ten second stall in the logs: four weather fetches failed
+	# at 10.00s, which is a timeout expiring rather than a server being slow.
+	# A lookup issues A and AAAA together and waits for both, so one record
+	# type going unanswered takes the whole dial deadline with it — and the
+	# fetch fails even though the other answer arrived immediately.
+	#
+	# Two seconds twice is still far longer than a working resolver on a LAN
+	# needs, and it leaves room inside the deadline to use the answer that
+	# did come back.
+	echo "options timeout:2 attempts:2"
+
+	# Prefer the RFC 3397 search list, as the stock script does.
+	if [ -n "$search" ]; then
+		echo "search $search"
+	elif [ -n "$domain" ]; then
+		echo "search $domain"
+	fi
+
+	for i in $dns; do
+		echo "nameserver $i"
+	done
+} >"$TMP" 2>/dev/null
+
+# Rename rather than truncate in place. A resolver reading this file while it
+# is half-written gets no nameservers at all, and the window is small but this
+# runs on every lease renewal for the life of the device.
+if [ -s "$TMP" ]; then
+	mv "$TMP" "$RESOLV_CONF" 2>/dev/null
+else
+	rm -f "$TMP" 2>/dev/null
+fi

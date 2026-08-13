@@ -74,12 +74,13 @@ test-shell:
 lint:
 	go vet $(PKGS)
 	gofmt -l . | grep -v '^board/' || true
-	@# Syntax-check the init scripts under the shell the device actually
-	@# uses. A parse error here is a mirror that does not boot.
-	@for s in board/overlay/etc/init.d/S* board/overlay/sbin/*; do \
-		sh -n "$$s" || exit 1; \
-	done
-	@echo "init scripts parse"
+	@# Syntax-check every shell script that ships in the image, under the
+	@# shell the device actually uses. A parse error here is a mirror that
+	@# does not boot, or a hook that silently never runs — which is worse,
+	@# because it looks like the thing it was meant to fix simply did not.
+	@find board/overlay -type f -perm -u+x -print0 \
+		| xargs -0 -I{} sh -n {} || exit 1
+	@echo "shell scripts parse"
 
 # --- OS image ---
 
