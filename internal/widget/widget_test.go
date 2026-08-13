@@ -3,12 +3,14 @@ package widget
 import (
 	"encoding/json"
 	"image"
+	"strings"
 	"testing"
+	"time"
 )
 
 type probe struct{ cfg map[string]any }
 
-func (p *probe) Key(Context) string                          { return "probe" }
+func (p *probe) Key(Context) string                           { return "probe" }
 func (p *probe) Render(*image.RGBA, image.Rectangle, Context) {}
 
 func init() {
@@ -100,5 +102,42 @@ func TestBuildUnknownTypeIsPlaceholder(t *testing.T) {
 func TestBuildMalformedConfigIsPlaceholder(t *testing.T) {
 	if _, ok := Build("test_defaults", json.RawMessage(`[1,2]`)).(*Unknown); !ok {
 		t.Fatal("malformed config did not yield a placeholder")
+	}
+}
+
+// A constructor that panics must produce a labelled tile, not a dead process.
+//
+// The compositor already isolates a widget that panics while rendering.
+// Construction is the riskier half — constructors parse configuration written
+// through the web UI and text pasted from anywhere — and it runs inside
+// buildPlacements on the render goroutine. Since the configuration that
+// caused it is saved, an unhandled panic there is not one bad frame: it is a
+// crash on this boot and every boot after, from a house nobody can visit.
+func TestBuildContainsAPanickingConstructor(t *testing.T) {
+	const typ = "exploding-test-widget"
+	Register(Descriptor{
+		Type: typ,
+		Name: "Exploding",
+		New: func(json.RawMessage) (Widget, error) {
+			panic("the constructor exploded")
+		},
+	})
+
+	w := Build(typ, json.RawMessage(`{}`))
+	if w == nil {
+		t.Fatal("Build returned nil for a panicking constructor")
+	}
+	u, ok := w.(*Unknown)
+	if !ok {
+		t.Fatalf("got %T, want a *Unknown placeholder", w)
+	}
+	if !strings.Contains(u.Reason, "panicked") {
+		t.Errorf("reason = %q, want it to say the constructor panicked", u.Reason)
+	}
+
+	// And the placeholder has to survive being rendered and keyed, or the
+	// containment merely moves the crash one step later.
+	if k := w.Key(Context{Now: time.Now(), Loc: time.UTC}); k == "" {
+		t.Error("the placeholder produced an empty key")
 	}
 }

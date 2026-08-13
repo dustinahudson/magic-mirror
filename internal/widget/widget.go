@@ -209,16 +209,36 @@ func Descriptors() []Descriptor {
 // yields an Unknown widget that renders a labelled placeholder. That happens
 // for real — a config written by a newer binary, then rolled back — and it
 // must never prevent the mirror from booting.
-func Build(typ string, raw json.RawMessage) Widget {
+func Build(typ string, raw json.RawMessage) (w Widget) {
 	d, ok := Lookup(typ)
 	if !ok {
 		return &Unknown{Type: typ, Reason: "unknown widget type"}
 	}
-	w, err := d.New(withDefaults(d, raw))
+
+	// Contain a constructor that panics rather than returning an error.
+	//
+	// The compositor already isolates a widget that panics while rendering,
+	// demoting it to a labelled tile. Construction had no such net, and it is
+	// the riskier half: constructors parse configuration written through the
+	// web UI and text pasted from anywhere. Worse, Build runs inside
+	// buildPlacements on the render goroutine, and the configuration that
+	// caused it is saved — so an unhandled panic there is not one bad frame,
+	// it is a crash on this boot and every boot after, from a house nobody
+	// can visit.
+	//
+	// One tile saying what went wrong is the same answer the render path
+	// already gives, and it leaves the settings page reachable to undo it.
+	defer func() {
+		if r := recover(); r != nil {
+			w = &Unknown{Type: typ, Reason: fmt.Sprintf("panicked while being built: %v", r)}
+		}
+	}()
+
+	built, err := d.New(withDefaults(d, raw))
 	if err != nil {
 		return &Unknown{Type: typ, Reason: err.Error()}
 	}
-	return w
+	return built
 }
 
 // withDefaults fills in field defaults for keys the stored config omits.
